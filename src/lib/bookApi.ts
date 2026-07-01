@@ -8,7 +8,7 @@ import type { Book, BookMeta } from "../types";
 import { firstValidCoverUrl } from "./coverUtils";
 import { fetchGoodreadsDescription } from "./goodreads";
 import { getCachedMeta, getCachedMetaSync, patchCachedCover, setCachedMeta } from "./cache";
-import { getLibraryDescription } from "./libraryDescriptions";
+import { getLibraryDescription, warmDescriptionIndex } from "./libraryDescriptions";
 import { cleanDescription, pickBestDescription } from "./textUtils";
 import {
   fetchHardcoverCoverUrl,
@@ -283,6 +283,7 @@ export async function fetchBookMeta(book: Book): Promise<BookMeta> {
   const cached = await getCachedMeta(book.key);
   if (cached?.description) return cached;
 
+  await warmDescriptionIndex();
   const bakedDescription = getLibraryDescription(book.key);
   const fast = await fetchBookMetaQuick(book, bakedDescription, cached);
   if (fast.description) {

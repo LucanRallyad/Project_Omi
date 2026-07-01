@@ -12,7 +12,7 @@ import {
 } from "./lib/recommender";
 import { fetchCoverUrl, prefetchDiscoverMeta, prefetchMeta } from "./lib/bookApi";
 import { warmMetaCache } from "./lib/cache";
-import { allLibraryCoverEntries } from "./lib/libraryCovers";
+import { allLibraryCoverEntries, warmCoverIndex } from "./lib/libraryCovers";
 import {
   loadRegistry,
   loadSaved,
@@ -41,7 +41,10 @@ const BookDetail = lazy(() =>
   import("./components/BookDetail").then((m) => ({ default: m.BookDetail }))
 );
 import { useShellTheme } from "./hooks/useShellTheme";
-import { ReadingGraph } from "./components/ReadingGraph";
+
+const ReadingGraph = lazy(() =>
+  import("./components/ReadingGraph").then((m) => ({ default: m.ReadingGraph }))
+);
 
 interface UndoState {
   book: Book;
@@ -168,7 +171,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      await Promise.all([initLibrary(), warmMetaCache()]);
+      await Promise.all([initLibrary(), warmMetaCache(), warmCoverIndex()]);
       setLibraryBooks(getLibrary());
 
       const [swipes, savedList, learned] = await Promise.all([
@@ -494,7 +497,9 @@ export default function App() {
                 ))}
 
               {view === "reading-map" && (
-                <ReadingGraph books={libraryBooks} syncedAt={librarySyncedAt()} />
+                <Suspense fallback={<CarouselSkeleton />}>
+                  <ReadingGraph books={libraryBooks} syncedAt={librarySyncedAt()} />
+                </Suspense>
               )}
             </main>
           </>

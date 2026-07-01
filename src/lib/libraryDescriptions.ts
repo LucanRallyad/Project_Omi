@@ -1,12 +1,11 @@
 /**
- * Baked + synced book descriptions — O(1) lookup via in-memory index.
+ * Baked + synced book descriptions — loaded on demand to keep the main bundle small.
  */
 import type { LibraryBook } from "../types";
-import librarySeed from "../data/library.json";
-import libraryDescriptionsData from "../data/library-descriptions.json";
 import { getLibrary } from "./libraryStore";
 
 const descriptionIndex = new Map<string, string>();
+let descriptionsReady: Promise<void> | null = null;
 
 function indexDescription(key: string, text: string | null | undefined): void {
   if (!text || text.length < 40) return;
@@ -16,12 +15,24 @@ function indexDescription(key: string, text: string | null | undefined): void {
   }
 }
 
-for (const [key, text] of Object.entries(libraryDescriptionsData as Record<string, string>)) {
-  indexDescription(key, text);
+async function loadBakedDescriptions(): Promise<void> {
+  const mod = await import("../data/library-descriptions.json");
+  for (const [key, text] of Object.entries(mod.default as Record<string, string>)) {
+    indexDescription(key, text);
+  }
 }
 
-for (const book of librarySeed as unknown as LibraryBook[]) {
-  indexDescription(book.key, book.description);
+/** Load baked descriptions JSON (deferred from initial bundle). */
+export async function warmDescriptionIndex(): Promise<void> {
+  if (!descriptionsReady) {
+    descriptionsReady = (async () => {
+      await loadBakedDescriptions();
+      for (const book of getLibrary()) {
+        indexDescription(book.key, book.description);
+      }
+    })();
+  }
+  await descriptionsReady;
 }
 
 /** Merge descriptions from a Supabase refresh without rebuilding the whole app. */

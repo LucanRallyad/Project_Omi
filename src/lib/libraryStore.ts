@@ -2,13 +2,20 @@
  * Runtime library — Supabase sync when available, static JSON as bootstrap fallback.
  */
 import type { LibraryBook } from "../types";
-import librarySeed from "../data/library.json";
+import { indexLibraryDescriptions } from "./libraryDescriptions";
 import { isSupabaseConfigured, supabase, PROFILE_ID } from "./supabase";
 import { rowToBook, type LibraryBookRow } from "../../lib/supabaseLibrary";
-import { indexLibraryDescriptions } from "./libraryDescriptions";
 
-let library: LibraryBook[] = librarySeed as unknown as LibraryBook[];
+let library: LibraryBook[] = [];
 let initialized = false;
+let seedPromise: Promise<LibraryBook[]> | null = null;
+
+async function loadSeedLibrary(): Promise<LibraryBook[]> {
+  if (!seedPromise) {
+    seedPromise = import("../data/library.json").then((mod) => mod.default as LibraryBook[]);
+  }
+  return seedPromise;
+}
 
 export function getLibrary(): LibraryBook[] {
   return library;
@@ -17,7 +24,7 @@ export function getLibrary(): LibraryBook[] {
 export function setLibrary(books: LibraryBook[]): void {
   library = books;
   initialized = true;
-  indexLibraryDescriptions(library);
+  indexLibraryDescriptions(books);
 }
 
 /** Pull the latest library rows from Supabase (no-op when offline / unconfigured). */
@@ -40,14 +47,26 @@ export async function loadLibraryFromSupabase(): Promise<LibraryBook[]> {
 /** Load library once at app start (Supabase when available, else baked JSON). */
 export async function initLibrary(): Promise<LibraryBook[]> {
   if (initialized) return library;
-  await loadLibraryFromSupabase();
+
+  if (isSupabaseConfigured && supabase) {
+    await loadLibraryFromSupabase();
+  }
+
+  if (!library.length) {
+    library = await loadSeedLibrary();
+    indexLibraryDescriptions(library);
+  }
+
   initialized = true;
   return library;
 }
 
 /** Re-fetch library from Supabase — used after weekly Goodreads sync / opening the reading map. */
 export async function refreshLibrary(): Promise<LibraryBook[]> {
-  return loadLibraryFromSupabase();
+  if (isSupabaseConfigured && supabase) {
+    await loadLibraryFromSupabase();
+  }
+  return library;
 }
 
 /** Most recent Goodreads sync timestamp from library rows, if any. */
@@ -60,6 +79,7 @@ export function librarySyncedAt(): string | null {
 }
 
 export function resetLibraryForTests(): void {
-  library = librarySeed as unknown as LibraryBook[];
+  library = [];
   initialized = false;
+  seedPromise = null;
 }
