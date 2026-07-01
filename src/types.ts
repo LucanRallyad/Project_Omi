@@ -47,6 +47,10 @@ export interface Book {
   reason?: string;
   /** True if this came from Romi's Goodreads "Want to Read" shelf. */
   fromWantToRead?: boolean;
+  /** Genre tags from API search, used for scoring and taste learning. */
+  categories?: string[];
+  /** Cover URL from search results — shown instantly while full lookup runs. */
+  seedCoverUrl?: string | null;
 }
 
 /** Enriched metadata fetched from external APIs. */

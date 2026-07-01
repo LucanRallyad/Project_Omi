@@ -10,11 +10,11 @@
  */
 import type { Book, LibraryBook, SwipeDirection, TasteWeight } from "../types";
 import libraryData from "../data/library.json";
-import { searchByAuthor, searchBySubject } from "./bookApi";
+import { searchByAuthor, searchByAuthorAndSubject, searchBySubject } from "./bookApi";
 
 const library = libraryData as unknown as LibraryBook[];
 
-/** Map shelf tags to broad genre/subject terms Google Books understands. */
+/** Map shelf tags to broad genre/subject terms book APIs understand. */
 const TAG_TO_SUBJECT: Record<string, string> = {
   romance: "Romance",
   "rom-coms": "Romantic comedy",
@@ -118,6 +118,14 @@ function scoreBook(book: Book, profile: TasteProfile): number {
   // Goodreads/Google rating as a light popularity prior.
   if (book.averageRating) score += (book.averageRating - 3.5) * 0.8;
 
+  // Genre overlap from Google Books categories (when present on API candidates).
+  if (book.categories?.length) {
+    for (const cat of book.categories) {
+      const genreW = profile.genreWeights.get(cat);
+      if (genreW) score += genreW * 1.2;
+    }
+  }
+
   if (book.fromWantToRead) score += 5; // her own explicit intent ranks first
 
   return score;
@@ -154,7 +162,13 @@ export async function generateCandidates(
     const results = await searchBySubject(genre);
     for (const b of results) add(b, `More ${genre.toLowerCase()} to fall for`);
   });
-  await Promise.all([...authorQueries, ...genreQueries]);
+  const crossQueries = profile.topAuthors.slice(0, 3).flatMap((author) =>
+    profile.topGenres.slice(0, 2).map(async (genre) => {
+      const results = await searchByAuthorAndSubject(author, genre);
+      for (const b of results) add(b, `${author} × ${genre.toLowerCase()}`);
+    })
+  );
+  await Promise.all([...authorQueries, ...genreQueries, ...crossQueries]);
 
   const ranked = [...pool.values()]
     .filter((b) => !seen.has(b.key))
@@ -173,12 +187,23 @@ export function resetSeen(): void {
 }
 
 /**
- * Learn from a swipe: nudge the author weight (and, if we later fetch genres,
- * the genre weights). Returns the delta records to persist.
+ * Learn from a swipe: nudge the author weight and any known genre weights.
+ * Returns the delta records to persist.
  */
-export function learnFromSwipe(book: Book, direction: SwipeDirection): TasteWeight[] {
+export function learnFromSwipe(
+  book: Book,
+  direction: SwipeDirection,
+  categories: string[] = []
+): TasteWeight[] {
   const delta = direction === "like" ? 1.5 : -1.5;
-  return [{ feature_type: "author", feature_value: book.author, weight: delta }];
+  const weights: TasteWeight[] = [
+    { feature_type: "author", feature_value: book.author, weight: delta },
+  ];
+  const genres = categories.length ? categories : (book.categories ?? []);
+  for (const genre of genres.slice(0, 3)) {
+    weights.push({ feature_type: "genre", feature_value: genre, weight: delta * 0.8 });
+  }
+  return weights;
 }
 
 export function libraryBooks(): LibraryBook[] {

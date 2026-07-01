@@ -22,7 +22,7 @@ Design and animation reference materials for this project. **Always read these w
 
 - **Palette:** cream `#F5F0E8`, blush `#F4C2C2`, rose `#D4849A`, espresso `#3D2B1F`, gold accent `#C9A961`
 - **Typography:** serif display (Playfair Display / Cormorant Garamond) + clean sans body (DM Sans)
-- **Fallback covers:** pink floral botanical pattern with elegant title typesetting (not a generic placeholder)
+- **Fallback covers:** clothbound-style mock (jewel-tone binding, linen texture, gold drop cap) — deterministic per book
 - **Desktop background:** warm cream gradient; **mobile:** dark charcoal (per video)
 
 ## For agents

@@ -1,20 +1,65 @@
 /**
- * Fetches book metadata (cover, description, genres, price, buy link) from free
- * public APIs, with graceful degradation and caching.
+ * Book metadata + discovery from Hardcover, Open Library, and Google Books.
  *
- * - Covers: Open Library Covers API (by ISBN), Google Books thumbnail fallback.
- * - Descriptions / genres / price: Google Books volumes API.
- * - Buy links: Google Books buy link if for sale, else a Bookshop.org search.
+ * Covers load via a fast race (first high-quality URL wins). Full metadata
+ * loads lazily for detail views. Price / buy links from Google Books.
  */
 import type { Book, BookMeta } from "../types";
-import { getCachedMeta, setCachedMeta } from "./cache";
+import { getCachedMeta, patchCachedCover, setCachedMeta } from "./cache";
+import {
+  fetchHardcoverCoverUrl,
+  fetchHardcoverMeta,
+  searchByAuthor as hcByAuthor,
+  searchByAuthorAndSubject as hcByAuthorSubject,
+  searchBySubject as hcBySubject,
+} from "./hardcover";
+import {
+  fetchOpenLibraryCoverUrl,
+  fetchOpenLibraryMeta,
+  searchByAuthor as olByAuthor,
+  searchBySubject as olBySubject,
+} from "./openLibrary";
 
 const GOOGLE_BOOKS = "https://www.googleapis.com/books/v1/volumes";
 
-/** Upgrade Google Books thumbnails to https + a slightly larger, crisper image. */
+function googleBooksUrl(params: Record<string, string | number>): string {
+  const url = new URL(GOOGLE_BOOKS);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, String(value));
+  }
+  const apiKey = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY;
+  if (apiKey) url.searchParams.set("key", apiKey);
+  return url.toString();
+}
+
+interface GoogleImageLinks {
+  thumbnail?: string;
+  smallThumbnail?: string;
+  small?: string;
+  medium?: string;
+  large?: string;
+  extraLarge?: string;
+}
+
+/** Prefer the largest Google Books rendition available. */
+function bestGoogleCover(links: GoogleImageLinks | undefined): string | null {
+  if (!links) return null;
+  const raw =
+    links.extraLarge ??
+    links.large ??
+    links.medium ??
+    links.small ??
+    links.thumbnail ??
+    links.smallThumbnail;
+  return cleanGoogleThumb(raw);
+}
+
 function cleanGoogleThumb(url: string | undefined): string | null {
   if (!url) return null;
-  return url.replace(/^http:/, "https:").replace("&edge=curl", "");
+  return url
+    .replace(/^http:/, "https:")
+    .replace("&edge=curl", "")
+    .replace(/zoom=\d+/, "zoom=0");
 }
 
 function bookshopSearch(book: Book): string {
@@ -38,10 +83,9 @@ interface GoogleVolume {
     pageCount?: number;
     publishedDate?: string;
     previewLink?: string;
-    imageLinks?: { thumbnail?: string; smallThumbnail?: string };
+    imageLinks?: GoogleImageLinks;
   };
   saleInfo?: {
-    saleability?: string;
     listPrice?: { amount?: number; currencyCode?: string };
     retailPrice?: { amount?: number; currencyCode?: string };
     buyLink?: string;
@@ -53,10 +97,7 @@ function formatPrice(vol: GoogleVolume): string | null {
   if (price?.amount == null) return null;
   const currency = price.currencyCode ?? "USD";
   try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency,
-    }).format(price.amount);
+    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(price.amount);
   } catch {
     return `${price.amount} ${currency}`;
   }
@@ -66,7 +107,7 @@ async function fetchGoogleVolume(book: Book): Promise<GoogleVolume | null> {
   const query = book.isbn13
     ? `isbn:${book.isbn13}`
     : `intitle:${book.title} inauthor:${book.author}`;
-  const url = `${GOOGLE_BOOKS}?q=${encodeURIComponent(query)}&maxResults=1&country=US`;
+  const url = googleBooksUrl({ q: query, maxResults: 1, country: "US" });
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -77,58 +118,123 @@ async function fetchGoogleVolume(book: Book): Promise<GoogleVolume | null> {
   }
 }
 
-/** Open Library returns a 404 (not a placeholder) when default=false is set. */
-function openLibraryCover(isbn13: string): string {
-  return `https://covers.openlibrary.org/b/isbn/${isbn13}-L.jpg?default=false`;
+async function fetchGoogleCoverUrl(book: Book): Promise<string | null> {
+  const vol = await fetchGoogleVolume(book);
+  return bestGoogleCover(vol?.volumeInfo?.imageLinks);
+}
+
+/** First source to return a URL wins — no pre-validation downloads. */
+function raceCoverSources(book: Book): Promise<string | null> {
+  const sources = [
+    () => fetchHardcoverCoverUrl(book),
+    () => fetchOpenLibraryCoverUrl(book),
+    () => fetchGoogleCoverUrl(book),
+  ];
+
+  return new Promise((resolve) => {
+    let remaining = sources.length;
+    let settled = false;
+
+    const finish = (url: string | null) => {
+      if (settled) return;
+      if (url) {
+        settled = true;
+        resolve(url);
+        return;
+      }
+      remaining -= 1;
+      if (remaining === 0) resolve(null);
+    };
+
+    for (const source of sources) {
+      source().then(finish).catch(() => finish(null));
+    }
+  });
 }
 
 /**
- * Check a cover exists by actually loading the image. This avoids CORS issues
- * that a HEAD fetch would hit, since <img> loads are not CORS-restricted.
+ * Fast cover-only fetch for the carousel. Uses cache → seed URL → parallel race.
  */
-function coverExists(url: string): Promise<boolean> {
-  if (typeof Image === "undefined") return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const img = new Image();
-    const timer = setTimeout(() => resolve(false), 6000);
-    img.onload = () => {
-      clearTimeout(timer);
-      // A real cover is wider than the 1px OL placeholder.
-      resolve(img.naturalWidth > 2);
-    };
-    img.onerror = () => {
-      clearTimeout(timer);
-      resolve(false);
-    };
-    img.src = url;
-  });
+export async function fetchCoverUrl(book: Book): Promise<string | null> {
+  const cached = await getCachedMeta(book.key);
+  if (cached?.coverUrl) return cached.coverUrl;
+  const url = book.seedCoverUrl ?? (await raceCoverSources(book));
+  if (url) void patchCachedCover(book.key, url);
+  return url;
+}
+
+function mergeCategories(...lists: (string[] | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const list of lists) {
+    for (const cat of list ?? []) {
+      const key = cat.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(cat);
+      }
+    }
+  }
+  return out.slice(0, 8);
+}
+
+function mergeBooks(...lists: Book[][]): Book[] {
+  const byKey = new Map<string, Book>();
+  for (const list of lists) {
+    for (const book of list) {
+      const existing = byKey.get(book.key);
+      if (!existing) {
+        byKey.set(book.key, { ...book });
+        continue;
+      }
+      byKey.set(book.key, {
+        ...existing,
+        series: existing.series ?? book.series,
+        seriesNumber: existing.seriesNumber ?? book.seriesNumber,
+        averageRating: existing.averageRating ?? book.averageRating,
+        categories: mergeCategories(existing.categories, book.categories),
+        seedCoverUrl: existing.seedCoverUrl ?? book.seedCoverUrl,
+      });
+    }
+  }
+  return [...byKey.values()];
+}
+
+function pickCoverUrl(
+  book: Book,
+  hc: Awaited<ReturnType<typeof fetchHardcoverMeta>>,
+  ol: Awaited<ReturnType<typeof fetchOpenLibraryMeta>>,
+  vol: GoogleVolume | null
+): string | null {
+  return (
+    book.seedCoverUrl ??
+    hc?.coverUrl ??
+    ol.coverUrl ??
+    bestGoogleCover(vol?.volumeInfo?.imageLinks) ??
+    null
+  );
 }
 
 export async function fetchBookMeta(book: Book): Promise<BookMeta> {
   const cached = await getCachedMeta(book.key);
   if (cached) return cached;
 
-  const vol = await fetchGoogleVolume(book);
+  const [hc, ol, vol] = await Promise.all([
+    fetchHardcoverMeta(book),
+    fetchOpenLibraryMeta(book),
+    fetchGoogleVolume(book),
+  ]);
   const info = vol?.volumeInfo;
 
-  let coverUrl: string | null = null;
-  if (book.isbn13) {
-    const olUrl = openLibraryCover(book.isbn13);
-    if (await coverExists(olUrl)) coverUrl = olUrl;
-  }
-  if (!coverUrl) {
-    coverUrl = cleanGoogleThumb(info?.imageLinks?.thumbnail ?? info?.imageLinks?.smallThumbnail);
-  }
-
   const meta: BookMeta = {
-    coverUrl,
-    description: info?.description?.replace(/<[^>]+>/g, "").trim() ?? null,
-    categories: info?.categories ?? [],
+    coverUrl: pickCoverUrl(book, hc, ol, vol),
+    description: hc?.description ?? ol.description ?? info?.description?.replace(/<[^>]+>/g, "").trim() ?? null,
+    categories: mergeCategories(hc?.categories, ol.categories, info?.categories, book.categories),
     price: vol ? formatPrice(vol) : null,
     buyUrl: vol?.saleInfo?.buyLink ?? bookshopSearch(book),
-    pageCount: info?.pageCount ?? null,
-    publishedDate: info?.publishedDate ?? null,
-    previewLink: cleanGoogleThumb(info?.previewLink) ?? null,
+    pageCount: hc?.pageCount ?? ol.pageCount ?? info?.pageCount ?? null,
+    publishedDate: hc?.publishedDate ?? ol.publishedDate ?? info?.publishedDate ?? null,
+    previewLink: ol.previewLink ?? cleanGoogleThumb(info?.previewLink) ?? null,
   };
 
   await setCachedMeta(book.key, meta);
@@ -164,13 +270,18 @@ function volumeToBook(vol: GoogleSearchVolume): Book | null {
     isbn13,
     goodreadsUrl: null,
     averageRating: info.averageRating ?? null,
+    categories: info.categories ?? [],
   };
 }
 
 async function googleSearch(query: string, maxResults = 20): Promise<Book[]> {
-  const url = `${GOOGLE_BOOKS}?q=${encodeURIComponent(
-    query
-  )}&maxResults=${maxResults}&orderBy=relevance&printType=books&country=US`;
+  const url = googleBooksUrl({
+    q: query,
+    maxResults,
+    orderBy: "relevance",
+    printType: "books",
+    country: "US",
+  });
   try {
     const res = await fetch(url);
     if (!res.ok) return [];
@@ -182,15 +293,48 @@ async function googleSearch(query: string, maxResults = 20): Promise<Book[]> {
   }
 }
 
+async function mergedSearch(fetchers: (() => Promise<Book[]>)[]): Promise<Book[]> {
+  const results = await Promise.all(fetchers.map((fn) => fn().catch(() => [] as Book[])));
+  return mergeBooks(...results);
+}
+
 export function searchByAuthor(author: string): Promise<Book[]> {
-  return googleSearch(`inauthor:"${author}"`, 20);
+  return mergedSearch([
+    () => hcByAuthor(author),
+    () => olByAuthor(author),
+    () => googleSearch(`inauthor:"${author}"`, 20),
+  ]);
 }
 
 export function searchBySubject(subject: string): Promise<Book[]> {
-  return googleSearch(`subject:"${subject}"`, 20);
+  return mergedSearch([
+    () => hcBySubject(subject),
+    () => olBySubject(subject),
+    () => googleSearch(`subject:"${subject}"`, 20),
+  ]);
 }
 
-/** Concurrency-limited batch prefetch so we don't overwhelm the APIs. */
+export function searchByAuthorAndSubject(author: string, subject: string): Promise<Book[]> {
+  return mergedSearch([
+    () => hcByAuthorSubject(author, subject),
+    () => googleSearch(`inauthor:"${author}" subject:"${subject}"`, 15),
+  ]);
+}
+
+/** Load covers for a batch; optionally upgrade with a higher-res race winner. */
+export async function prefetchCovers(books: Book[], concurrency = 8): Promise<void> {
+  const queue = [...books];
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (queue.length) {
+      const book = queue.shift();
+      if (!book) break;
+      const url = book.seedCoverUrl ?? (await fetchCoverUrl(book));
+      await patchCachedCover(book.key, url);
+    }
+  });
+  await Promise.all(workers);
+}
+
 export async function prefetchMeta(books: Book[], concurrency = 3): Promise<void> {
   const queue = [...books];
   const workers = Array.from({ length: concurrency }, async () => {
@@ -198,7 +342,7 @@ export async function prefetchMeta(books: Book[], concurrency = 3): Promise<void
       const book = queue.shift();
       if (!book) break;
       await fetchBookMeta(book).catch(() => undefined);
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 150));
     }
   });
   await Promise.all(workers);

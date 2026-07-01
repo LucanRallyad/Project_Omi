@@ -132,9 +132,9 @@ export interface RegisteredBook extends Book {
   coverUrl: string | null;
 }
 
-export function registerBook(book: Book, coverUrl: string | null): void {
+export function registerBook(book: Book, coverUrl: string | null, categories?: string[]): void {
   const registry = readLS<Record<string, RegisteredBook>>(LS_REGISTRY, {});
-  registry[book.key] = { ...book, coverUrl };
+  registry[book.key] = { ...book, coverUrl, categories: categories ?? book.categories };
   writeLS(LS_REGISTRY, registry);
 }
 

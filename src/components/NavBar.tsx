@@ -7,6 +7,7 @@ interface NavBarProps {
   onChange: (view: ShelfView) => void;
   savedCount: number;
   likedCount: number;
+  dark?: boolean;
 }
 
 const tabs: { id: ShelfView; label: string; icon: typeof Compass }[] = [
@@ -16,13 +17,16 @@ const tabs: { id: ShelfView; label: string; icon: typeof Compass }[] = [
   { id: "want-to-read", label: "Want to Read", icon: BookMarked },
 ];
 
-export function NavBar({ view, onChange, savedCount, likedCount }: NavBarProps) {
+export function NavBar({ view, onChange, savedCount, likedCount, dark = false }: NavBarProps) {
   return (
     <motion.nav
       initial={{ y: -60, x: "-50%", opacity: 0 }}
       animate={{ y: 0, x: "-50%", opacity: 1 }}
       transition={{ type: "spring", stiffness: 200, damping: 24, delay: 0.1 }}
-      className="pointer-events-auto fixed left-1/2 top-4 z-40 flex max-w-[calc(100vw-1.5rem)] items-center gap-0.5 rounded-full glass px-1.5 py-1.5 shadow-soft"
+      className={`fixed left-1/2 z-[60] flex max-w-[calc(100vw-1.5rem)] items-center gap-0.5 rounded-full px-1.5 py-1.5 shadow-soft ${
+        dark ? "glass-dark" : "glass"
+      }`}
+      style={{ top: "max(1rem, env(safe-area-inset-top))" }}
     >
       {tabs.map((tab) => {
         const active = view === tab.id;
@@ -34,7 +38,7 @@ export function NavBar({ view, onChange, savedCount, likedCount }: NavBarProps) 
             key={tab.id}
             type="button"
             onClick={() => onChange(tab.id)}
-            className="relative flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-colors sm:px-4"
+            className="relative flex touch-manipulation items-center gap-1.5 rounded-full px-3 py-2.5 text-sm font-medium transition-colors sm:px-4"
           >
             {active && (
               <motion.span
@@ -43,11 +47,13 @@ export function NavBar({ view, onChange, savedCount, likedCount }: NavBarProps) 
                 transition={{ type: "spring", stiffness: 400, damping: 32 }}
               />
             )}
-            <span className={`relative z-10 ${active ? "text-white" : "text-espresso/70"}`}>
+            <span
+              className={`relative z-10 ${active ? "text-white" : dark ? "text-white/65" : "text-espresso/70"}`}
+            >
               <Icon size={16} strokeWidth={2.2} />
             </span>
             <span
-              className={`relative z-10 hidden sm:inline ${active ? "text-white" : "text-espresso/70"}`}
+              className={`relative z-10 hidden sm:inline ${active ? "text-white" : dark ? "text-white/65" : "text-espresso/70"}`}
             >
               {tab.label}
             </span>

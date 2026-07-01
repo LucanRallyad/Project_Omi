@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { Heart, Sparkles } from "lucide-react";
 import type { Book } from "../types";
-import { CoverFallback } from "./CoverFallback";
+import { BookCover } from "./BookCover";
 
 interface BookCardProps {
   book: Book;
@@ -12,6 +12,10 @@ interface BookCardProps {
   layoutId?: string;
   /** Show the "why recommended" chip + want-to-read badge (center card only). */
   showMeta?: boolean;
+  /** Dark immersive mode (mobile discover). */
+  dark?: boolean;
+  /** Eager-load cover (center card). */
+  priority?: boolean;
 }
 
 export function BookCard({
@@ -21,28 +25,26 @@ export function BookCard({
   onToggleSave,
   layoutId,
   showMeta = true,
+  dark = false,
+  priority = false,
 }: BookCardProps) {
-  return (
-    <div className="relative h-full w-full overflow-hidden rounded-[1.4rem] bg-cream shadow-card">
-      {/* Cover art or floral fallback */}
-      {coverUrl ? (
-        <motion.img
-          layoutId={layoutId}
-          src={coverUrl}
-          alt={`Cover of ${book.title}`}
-          className="h-full w-full object-cover"
-          draggable={false}
-        />
-      ) : (
-        <motion.div layoutId={layoutId} className="h-full w-full">
-          <CoverFallback book={book} />
-        </motion.div>
-      )}
+  const displayUrl = coverUrl ?? book.seedCoverUrl ?? null;
 
-      {/* Gradient scrim so text + buttons stay legible over any cover */}
+  return (
+    <div
+      className={`relative h-full w-full overflow-hidden rounded-[1.4rem] ${
+        dark ? "bg-charcoal shadow-[0_24px_60px_-16px_rgba(0,0,0,0.65)]" : "bg-cream shadow-card"
+      }`}
+    >
+      <BookCover
+        book={book}
+        coverUrl={displayUrl}
+        layoutId={layoutId}
+        priority={priority}
+      />
+
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/45" />
 
-      {/* Save button — top right, stops propagation so it doesn't open detail */}
       <motion.button
         type="button"
         onPointerDownCapture={(e) => e.stopPropagation()}
@@ -51,7 +53,9 @@ export function BookCard({
           onToggleSave();
         }}
         whileTap={{ scale: 0.8 }}
-        className="absolute right-3 top-3 z-10 flex h-11 w-11 items-center justify-center rounded-full glass shadow-soft"
+        className={`absolute right-3 top-3 z-10 flex h-11 w-11 items-center justify-center rounded-full shadow-soft ${
+          dark ? "glass-dark" : "glass"
+        }`}
         aria-label={saved ? "Remove from saved" : "Save for later"}
       >
         <motion.span
@@ -59,22 +63,24 @@ export function BookCard({
           transition={{ duration: 0.4 }}
         >
           <Heart
-            className={saved ? "fill-rose text-rose" : "text-espresso/70"}
+            className={saved ? "fill-rose text-rose" : dark ? "text-white/70" : "text-espresso/70"}
             size={20}
             strokeWidth={2.2}
           />
         </motion.span>
       </motion.button>
 
-      {/* Want-to-read badge */}
       {showMeta && book.fromWantToRead && (
-        <div className="absolute left-3 top-3 z-10 flex items-center gap-1 rounded-full glass px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-espresso shadow-soft">
+        <div
+          className={`absolute left-3 top-3 z-10 flex items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide shadow-soft ${
+            dark ? "glass-dark text-white/90" : "glass text-espresso"
+          }`}
+        >
           <Sparkles size={12} className="text-gold" />
           Want to Read
         </div>
       )}
 
-      {/* Title + author + reason at the bottom */}
       <div className="absolute inset-x-0 bottom-0 z-10 p-4 text-white">
         <h3 className="font-display text-2xl font-semibold leading-tight drop-shadow-md">
           {book.title}

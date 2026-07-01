@@ -6,28 +6,36 @@ export interface Viewport {
   isMobile: boolean;
 }
 
+function readViewport(): Viewport {
+  if (typeof window === "undefined") {
+    return { width: 1200, height: 800, isMobile: false };
+  }
+  const vv = window.visualViewport;
+  const width = vv?.width ?? window.innerWidth;
+  const height = vv?.height ?? window.innerHeight;
+  return {
+    width,
+    height,
+    isMobile: width < 768,
+  };
+}
+
 export function useViewport(): Viewport {
-  const [vp, setVp] = useState<Viewport>(() => ({
-    width: typeof window !== "undefined" ? window.innerWidth : 1200,
-    height: typeof window !== "undefined" ? window.innerHeight : 800,
-    isMobile: typeof window !== "undefined" ? window.innerWidth < 768 : false,
-  }));
+  const [vp, setVp] = useState<Viewport>(readViewport);
 
   useEffect(() => {
     let frame = 0;
-    const onResize = () => {
+    const sync = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() =>
-        setVp({
-          width: window.innerWidth,
-          height: window.innerHeight,
-          isMobile: window.innerWidth < 768,
-        })
-      );
+      frame = requestAnimationFrame(() => setVp(readViewport()));
     };
-    window.addEventListener("resize", onResize);
+    window.addEventListener("resize", sync);
+    window.visualViewport?.addEventListener("resize", sync);
+    window.visualViewport?.addEventListener("scroll", sync);
     return () => {
-      window.removeEventListener("resize", onResize);
+      window.removeEventListener("resize", sync);
+      window.visualViewport?.removeEventListener("resize", sync);
+      window.visualViewport?.removeEventListener("scroll", sync);
       cancelAnimationFrame(frame);
     };
   }, []);

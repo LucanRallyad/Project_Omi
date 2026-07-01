@@ -16,6 +16,7 @@ export function UndoToast({ direction, title, onUndo }: UndoToastProps) {
       exit={{ y: 60, x: "-50%", opacity: 0 }}
       transition={{ type: "spring", stiffness: 300, damping: 28 }}
       className="fixed bottom-6 left-1/2 z-40 flex items-center gap-3 rounded-full bg-espresso px-5 py-3 text-sm text-cream shadow-card"
+      style={{ bottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
     >
       <span className="max-w-[45vw] truncate">
         {direction === "like" ? "Loved" : "Passed"} “{title}”

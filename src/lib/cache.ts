@@ -73,3 +73,20 @@ export async function setCachedMeta(key: string, meta: BookMeta): Promise<void> 
     // Ignore write failures — the in-memory cache still serves this session.
   }
 }
+
+const EMPTY_META: BookMeta = {
+  coverUrl: null,
+  description: null,
+  categories: [],
+  price: null,
+  buyUrl: "",
+  pageCount: null,
+  publishedDate: null,
+  previewLink: null,
+};
+
+/** Update just the cover in cache (after a fast cover race). */
+export async function patchCachedCover(key: string, coverUrl: string | null): Promise<void> {
+  const existing = (await getCachedMeta(key)) ?? { ...EMPTY_META };
+  await setCachedMeta(key, { ...existing, coverUrl });
+}

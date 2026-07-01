@@ -18,7 +18,7 @@ export function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
     <motion.div
       className="fixed inset-0 z-50 flex flex-col items-center justify-center overflow-hidden bg-warm"
       initial={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      exit={{ opacity: 0, pointerEvents: "none" }}
       transition={{ duration: 0.7 }}
     >
       {/* Falling petals */}
@@ -60,7 +60,7 @@ export function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
         >
           Made for
         </motion.p>
-        <h1 className="font-display text-7xl font-semibold text-espresso md:text-8xl">Romi</h1>
+        <h1 className="font-display text-5xl font-semibold text-espresso sm:text-7xl md:text-8xl">Romi</h1>
         <p className="mt-5 max-w-sm text-espresso/70">
           A little corner of the internet full of your next favorite books — chosen just for you,
           and getting smarter every time you swipe.
@@ -71,7 +71,7 @@ export function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
           onClick={onEnter}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          className="mt-10 rounded-full bg-rose px-10 py-4 font-semibold text-white shadow-glow"
+          className="mt-10 touch-manipulation rounded-full bg-rose px-10 py-4 font-semibold text-white shadow-glow"
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 1 }}

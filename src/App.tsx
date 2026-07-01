@@ -11,7 +11,7 @@ import {
   wantToReadBooks,
   type TasteProfile,
 } from "./lib/recommender";
-import { fetchBookMeta } from "./lib/bookApi";
+import { fetchCoverUrl } from "./lib/bookApi";
 import {
   loadRegistry,
   loadSaved,
@@ -84,6 +84,7 @@ export default function App() {
   const weightsRef = useRef<TasteWeight[]>([]);
   const excludeRef = useRef<Set<string>>(new Set());
   const coversRef = useRef<Set<string>>(new Set());
+  const categoriesRef = useRef<Map<string, string[]>>(new Map());
   const undoTimer = useRef<number | null>(null);
   const fetchingMore = useRef(false);
 
@@ -93,20 +94,40 @@ export default function App() {
   // Cover fetching: keep a sliding window of covers loaded around the active
   // card so nothing pops in, and register each book for the shelves.
   // -------------------------------------------------------------------------
-  const ensureCovers = useCallback(async (books: Book[], concurrency = 4) => {
-    const queueToLoad = books.filter((b) => !coversRef.current.has(b.key));
+  const ensureCovers = useCallback(async (books: Book[], priorityKey?: string) => {
+    const pending = books.filter((b) => !coversRef.current.has(b.key));
+    if (!pending.length) return;
+
+    // Instant covers from search/API seeds — zero network.
+    for (const book of pending) {
+      if (book.seedCoverUrl) {
+        coversRef.current.add(book.key);
+        registerBook(book, book.seedCoverUrl, book.categories);
+        setCovers((prev) => new Map(prev).set(book.key, book.seedCoverUrl!));
+      }
+    }
+
+    let queue = pending.filter((b) => !b.seedCoverUrl);
+    if (priorityKey) {
+      queue = [
+        ...queue.filter((b) => b.key === priorityKey),
+        ...queue.filter((b) => b.key !== priorityKey),
+      ];
+    }
+
+    const concurrency = 8;
     const load = async (book: Book) => {
       coversRef.current.add(book.key);
       try {
-        const meta = await fetchBookMeta(book);
-        registerBook(book, meta.coverUrl);
-        setCovers((prev) => new Map(prev).set(book.key, meta.coverUrl));
+        const url = await fetchCoverUrl(book);
+        registerBook(book, url, book.categories);
+        setCovers((prev) => new Map(prev).set(book.key, url));
       } catch {
         setCovers((prev) => new Map(prev).set(book.key, null));
       }
     };
 
-    const pool = [...queueToLoad];
+    const pool = [...queue];
     const workers = Array.from({ length: concurrency }, async () => {
       while (pool.length) {
         const book = pool.shift();
@@ -146,7 +167,7 @@ export default function App() {
 
       setQueue(first);
       setLoading(false);
-      void ensureCovers(first.slice(0, 6));
+      void ensureCovers(first.slice(0, 10), first[0]?.key);
     })();
     return () => {
       cancelled = true;
@@ -156,8 +177,8 @@ export default function App() {
   // Keep the cover window warm as the active card moves.
   useEffect(() => {
     if (!queue.length) return;
-    const window = queue.slice(Math.max(0, activeIndex - 1), activeIndex + 4);
-    void ensureCovers(window);
+    const window = queue.slice(Math.max(0, activeIndex - 1), activeIndex + 6);
+    void ensureCovers(window, queue[activeIndex]?.key);
   }, [queue, activeIndex, ensureCovers]);
 
   // Fetch more candidates when running low.
@@ -200,7 +221,11 @@ export default function App() {
       void recordSwipe(book.key, direction);
       excludeRef.current.add(book.key);
 
-      const delta = learnFromSwipe(book, direction);
+      const delta = learnFromSwipe(
+        book,
+        direction,
+        categoriesRef.current.get(book.key) ?? book.categories
+      );
       const merged = mergeWeights(weightsRef.current, delta);
       weightsRef.current = merged;
       void saveWeights(merged);
@@ -306,12 +331,15 @@ export default function App() {
           <>
             <NavBar
               view={view}
-              onChange={setView}
+              onChange={(next) => {
+                setDetailBook(null);
+                setView(next);
+              }}
               savedCount={saved.length}
               likedCount={likedKeys.length}
             />
 
-            <main className="h-full w-full">
+            <main className="h-full min-h-0 w-full">
               {view === "discover" && (
                 <>
                   {loading ? (

@@ -20,10 +20,14 @@ interface SwipeCardProps {
   onOpenDetail: () => void;
   layoutId: string;
   reducedMotion: boolean;
+  isMobile?: boolean;
 }
 
 const H_THRESHOLD = 120;
 const V_THRESHOLD = 100;
+
+const EXIT_SPRING = { type: "spring" as const, stiffness: 160, damping: 22, mass: 0.9 };
+const SNAP_SPRING = { type: "spring" as const, stiffness: 380, damping: 32, mass: 0.8 };
 
 /**
  * The focused center card. Horizontal drag = like/pass (trains the algorithm),
@@ -39,12 +43,13 @@ export function SwipeCard({
   onOpenDetail,
   layoutId,
   reducedMotion,
+  isMobile = false,
 }: SwipeCardProps) {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
   const [exiting, setExiting] = useState(false);
 
-  const rotateZ = useTransform(x, [-300, 0, 300], [-15, 0, 15]);
+  const rotateZ = useTransform(x, [-320, 0, 320], [-28, 0, 28]);
   const likeOpacity = useTransform(x, [40, 140], [0, 1]);
   const passOpacity = useTransform(x, [-140, -40], [1, 0]);
   const skipOpacity = useTransform(y, [40, 120], [0, 1]);
@@ -53,15 +58,14 @@ export function SwipeCard({
     setExiting(true);
     const target =
       action === "like"
-        ? { x: 600, y: 40 }
+        ? { x: 640, y: 48 }
         : action === "pass"
-          ? { x: -600, y: 40 }
-          : { x: 0, y: 700 };
-    animate(x, target.x, { type: "spring", stiffness: 180, damping: 22 });
+          ? { x: -640, y: 48 }
+          : { x: 0, y: 760 };
+
+    animate(x, target.x, EXIT_SPRING);
     animate(y, target.y, {
-      type: "spring",
-      stiffness: 180,
-      damping: 22,
+      ...EXIT_SPRING,
       onComplete: () => onCommit(action),
     });
   }
@@ -74,24 +78,22 @@ export function SwipeCard({
     if (horizontal && offset.x < -H_THRESHOLD) return flingOff("pass");
     if (!horizontal && offset.y > V_THRESHOLD) return flingOff("skip");
 
-    // Under threshold: spring back to center.
-    animate(x, 0, { type: "spring", stiffness: 400, damping: 30 });
-    animate(y, 0, { type: "spring", stiffness: 400, damping: 30 });
+    animate(x, 0, SNAP_SPRING);
+    animate(y, 0, SNAP_SPRING);
   }
 
   return (
     <motion.div
-      className="relative h-full w-full cursor-grab touch-none active:cursor-grabbing"
-      style={{ x, y, rotateZ }}
+      className="relative h-full w-full cursor-grab touch-pan-y active:cursor-grabbing"
+      style={{ x, y, rotateZ, touchAction: "none" }}
       drag={!reducedMotion && !exiting}
       dragSnapToOrigin={false}
-      dragElastic={0.6}
-      onClick={() => {
-        // Only treat as a tap if the card hasn't been dragged away.
+      dragElastic={0.45}
+      onTap={() => {
         if (Math.abs(x.get()) < 6 && Math.abs(y.get()) < 6) onOpenDetail();
       }}
       onDragEnd={handleDragEnd}
-      whileTap={{ scale: 0.99 }}
+      whileTap={{ scale: 0.985 }}
     >
       <BookCard
         book={book}
@@ -100,9 +102,10 @@ export function SwipeCard({
         onToggleSave={onToggleSave}
         layoutId={layoutId}
         showMeta
+        dark={isMobile}
+        priority
       />
 
-      {/* Directional stamps */}
       <motion.div
         style={{ opacity: likeOpacity }}
         className="pointer-events-none absolute left-6 top-10 -rotate-12 rounded-xl border-4 border-emerald-400 px-4 py-1 text-3xl font-extrabold uppercase tracking-wider text-emerald-400"
@@ -117,7 +120,7 @@ export function SwipeCard({
       </motion.div>
       <motion.div
         style={{ opacity: skipOpacity }}
-        className="pointer-events-none absolute inset-x-0 bottom-16 mx-auto w-max rounded-xl border-4 border-white/70 px-4 py-1 text-2xl font-extrabold uppercase tracking-wider text-white/80"
+        className="pointer-events-none absolute inset-x-0 bottom-16 mx-auto w-max rounded-xl border-4 border-espresso/35 px-4 py-1 text-2xl font-extrabold uppercase tracking-wider text-espresso/75"
       >
         Skip
       </motion.div>

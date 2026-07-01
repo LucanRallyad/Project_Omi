@@ -1,9 +1,10 @@
-import { motion } from "framer-motion";
+import { motion, useDragControls } from "framer-motion";
 import { X, Check, ChevronDown, Heart, ExternalLink, ShoppingBag } from "lucide-react";
 import type { Book } from "../types";
 import { useBookMeta } from "../hooks/useBookMeta";
+import { useViewport } from "../hooks/useViewport";
 import { buyLinks } from "../lib/bookApi";
-import { CoverFallback } from "./CoverFallback";
+import { BookCover } from "./BookCover";
 import type { SwipeAction } from "./SwipeCard";
 
 interface BookDetailProps {
@@ -25,6 +26,8 @@ export function BookDetail({
   showActions,
 }: BookDetailProps) {
   const { meta, loading } = useBookMeta(book);
+  const { isMobile } = useViewport();
+  const dragControls = useDragControls();
   const links = buyLinks(book);
   const layoutId = `cover-${book.key}`;
 
@@ -51,41 +54,52 @@ export function BookDetail({
 
       {/* Content sheet */}
       <motion.div
-        className="relative z-10 flex h-full w-full max-w-2xl flex-col overflow-y-auto no-scrollbar bg-cream/95 shadow-card md:my-6 md:h-auto md:max-h-[92vh] md:rounded-3xl"
-        initial={{ y: 40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 40, opacity: 0 }}
-        transition={{ type: "spring", stiffness: 300, damping: 32 }}
-        drag="y"
+        className={`relative z-10 flex h-full w-full max-w-2xl flex-col overflow-hidden bg-cream/95 shadow-card ${
+          isMobile ? "" : "md:my-6 md:max-h-[92vh] md:rounded-3xl"
+        }`}
+        initial={{ y: isMobile ? "100%" : 40, opacity: isMobile ? 1 : 0, scale: isMobile ? 1 : 0.98 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: isMobile ? "100%" : 40, opacity: isMobile ? 1 : 0, scale: isMobile ? 1 : 0.98 }}
+        transition={{ type: "spring", stiffness: isMobile ? 320 : 300, damping: isMobile ? 34 : 32 }}
+        drag={isMobile ? "y" : false}
+        dragControls={dragControls}
+        dragListener={false}
         dragConstraints={{ top: 0, bottom: 0 }}
         dragElastic={0.3}
         onDragEnd={(_, info) => {
           if (info.offset.y > 120) onClose();
         }}
       >
+        {isMobile && (
+          <div
+            className="flex shrink-0 cursor-grab justify-center py-3 active:cursor-grabbing"
+            onPointerDown={(e) => dragControls.start(e)}
+            aria-hidden
+          >
+            <div className="h-1 w-10 rounded-full bg-espresso/20" />
+          </div>
+        )}
+
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full glass shadow-soft"
+          className={`absolute right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full glass shadow-soft ${
+            isMobile ? "top-12" : "top-4"
+          }`}
           aria-label="Close"
         >
           <X size={20} className="text-espresso" />
         </button>
 
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain no-scrollbar touch-pan-y">
         {/* Cover header */}
-        <div className="relative h-72 w-full shrink-0 overflow-hidden md:h-80 md:rounded-t-3xl">
-          {meta.coverUrl ? (
-            <motion.img
-              layoutId={layoutId}
-              src={meta.coverUrl}
-              alt={`Cover of ${book.title}`}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <motion.div layoutId={layoutId} className="h-full w-full">
-              <CoverFallback book={book} />
-            </motion.div>
-          )}
+        <div className={`relative h-72 w-full shrink-0 overflow-hidden md:h-80 ${isMobile ? "" : "md:rounded-t-3xl"}`}>
+          <BookCover
+            book={book}
+            coverUrl={meta.coverUrl ?? book.seedCoverUrl ?? null}
+            layoutId={layoutId}
+            priority
+          />
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-cream via-cream/40 to-transparent" />
 
           <button
@@ -99,7 +113,7 @@ export function BookDetail({
         </div>
 
         {/* Body */}
-        <div className={`flex flex-1 flex-col gap-4 px-6 pt-4 ${showActions ? "pb-28" : "pb-10"}`}>
+        <div className="flex flex-col gap-4 px-6 pt-4 pb-8">
           <div>
             <h2 className="font-display text-3xl font-semibold leading-tight text-espresso">
               {book.title}
@@ -179,17 +193,18 @@ export function BookDetail({
             </a>
           )}
         </div>
+        </div>
 
-        {/* Sticky action bar (only for the active discover card) */}
+        {/* Action bar sits below scroll content so it never covers the description */}
         {showActions && (
-          <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-center gap-4 border-t border-espresso/10 bg-cream/90 px-6 py-4 backdrop-blur-md">
-            <DetailAction label="Pass" tone="pass" onClick={() => act("pass")}>
+          <div className="shrink-0 flex items-center justify-center gap-4 border-t border-espresso/10 bg-cream/90 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-md">
+            <DetailAction label="Pass" tone="pass" dark={isMobile} onClick={() => act("pass")}>
               <X size={22} strokeWidth={2.6} />
             </DetailAction>
-            <DetailAction label="Skip" tone="skip" onClick={() => act("skip")}>
+            <DetailAction label="Skip" tone="skip" dark={isMobile} onClick={() => act("skip")}>
               <ChevronDown size={20} strokeWidth={2.6} />
             </DetailAction>
-            <DetailAction label="Love" tone="like" onClick={() => act("like")}>
+            <DetailAction label="Love" tone="like" dark={isMobile} onClick={() => act("like")}>
               <Check size={22} strokeWidth={2.6} />
             </DetailAction>
           </div>
@@ -204,23 +219,26 @@ function DetailAction({
   label,
   tone,
   onClick,
+  dark,
 }: {
   children: React.ReactNode;
   label: string;
   tone: "like" | "pass" | "skip";
   onClick: () => void;
+  dark?: boolean;
 }) {
   const tones: Record<string, string> = {
     like: "bg-emerald-500 text-white",
     pass: "bg-rose text-white",
-    skip: "glass text-espresso/70",
+    skip: dark ? "glass-dark text-white/80" : "glass text-espresso/70",
   };
   return (
     <motion.button
       type="button"
       onClick={onClick}
+      onPointerDown={(e) => e.stopPropagation()}
       whileTap={{ scale: 0.85 }}
-      className={`flex h-14 w-14 items-center justify-center rounded-full ${tones[tone]} shadow-soft`}
+      className={`relative z-10 flex h-14 w-14 touch-manipulation items-center justify-center rounded-full ${tones[tone]} shadow-soft`}
       aria-label={label}
     >
       {children}
