@@ -22,18 +22,20 @@ export function setLibrary(books: LibraryBook[]): void {
 export async function initLibrary(): Promise<LibraryBook[]> {
   if (initialized) return library;
 
+  initialized = true;
+
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
+    void supabase
       .from("library_books")
       .select("*")
-      .eq("profile_id", PROFILE_ID);
-
-    if (!error && data?.length) {
-      library = (data as LibraryBookRow[]).map(rowToBook);
-    }
+      .eq("profile_id", PROFILE_ID)
+      .then(({ data, error }) => {
+        if (!error && data?.length) {
+          library = (data as LibraryBookRow[]).map(rowToBook);
+        }
+      });
   }
 
-  initialized = true;
   return library;
 }
 

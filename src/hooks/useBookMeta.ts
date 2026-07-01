@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Book, BookMeta } from "../types";
-import { fetchBookMeta } from "../lib/bookApi";
+import { fetchBookMeta, fetchBookMetaQuick } from "../lib/bookApi";
+import { getCachedMeta } from "../lib/cache";
 import { getLibraryDescription } from "../lib/libraryDescriptions";
 
 const EMPTY: BookMeta = {
@@ -22,26 +23,50 @@ function initialMeta(book: Book | null): BookMeta {
 
 export function useBookMeta(book: Book | null) {
   const [meta, setMeta] = useState<BookMeta>(() => initialMeta(book));
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => !initialMeta(book).description);
 
   useEffect(() => {
     if (!book) {
       setMeta(EMPTY);
+      setLoading(false);
       return;
     }
-    setMeta(initialMeta(book));
+
+    const baked = getLibraryDescription(book.key);
+    const seed = baked ? { ...EMPTY, description: baked } : EMPTY;
+    setMeta(seed);
+    setLoading(!baked);
+
     let cancelled = false;
-    setLoading(true);
-    fetchBookMeta(book)
-      .then((m) => {
-        if (!cancelled) setMeta(m);
-      })
-      .catch(() => {
-        if (!cancelled) setMeta(EMPTY);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+
+    (async () => {
+      const cached = await getCachedMeta(book.key);
+      if (cancelled) return;
+
+      if (cached?.description) {
+        setMeta(cached);
+        setLoading(false);
+        return;
+      }
+
+      const quick = await fetchBookMetaQuick(book, baked, cached);
+      if (cancelled) return;
+
+      setMeta(quick);
+      if (quick.description) {
+        setLoading(false);
+        return;
+      }
+
+      const full = await fetchBookMeta(book);
+      if (!cancelled) {
+        setMeta(full);
+        setLoading(false);
+      }
+    })().catch(() => {
+      if (!cancelled) setLoading(false);
+    });
+
     return () => {
       cancelled = true;
     };

@@ -9,7 +9,7 @@ import {
   cardDimensions,
   computeCardTransform,
   DESKTOP_SPRING,
-  MOBILE_SPRING,
+  MOBILE_TWEEN,
 } from "../lib/carouselLayout";
 
 interface CoverflowCarouselProps {
@@ -23,7 +23,8 @@ interface CoverflowCarouselProps {
   onOpenDetail: (book: Book) => void;
 }
 
-const VISIBLE_RANGE = 4;
+const DESKTOP_VISIBLE_RANGE = 4;
+const MOBILE_VISIBLE_RANGE = 3;
 
 export function CoverflowCarousel({
   books,
@@ -41,7 +42,8 @@ export function CoverflowCarousel({
   const swipeRef = useRef<SwipeCardHandle>(null);
 
   const { cardW, cardH, spacing } = cardDimensions(width, height, isMobile);
-  const spring = isMobile ? MOBILE_SPRING : DESKTOP_SPRING;
+  const transition = isMobile ? MOBILE_TWEEN : DESKTOP_SPRING;
+  const visibleRange = isMobile ? MOBILE_VISIBLE_RANGE : DESKTOP_VISIBLE_RANGE;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -75,16 +77,16 @@ export function CoverflowCarousel({
     <div className="relative flex h-full min-h-0 w-full flex-col">
       <div
         className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden"
-        style={{ perspective: isMobile ? 900 : 1400, perspectiveOrigin: "50% 45%" }}
+        style={{ perspective: isMobile ? undefined : 1400, perspectiveOrigin: "50% 45%" }}
         onWheel={handleWheel}
       >
         <div
           className="relative"
-          style={{ width: cardW, height: cardH, transformStyle: "preserve-3d" }}
+          style={{ width: cardW, height: cardH, transformStyle: isMobile ? undefined : "preserve-3d" }}
         >
           {books.map((book, index) => {
             const d = index - activeIndex;
-            if (Math.abs(d) > VISIBLE_RANGE) return null;
+            if (Math.abs(d) > visibleRange) return null;
             if (isMobile && d < 0) return null;
 
             const isCenter = d === 0;
@@ -103,8 +105,8 @@ export function CoverflowCarousel({
                 className="absolute inset-0"
                 style={{
                   zIndex,
-                  transformStyle: "preserve-3d",
-                  transformPerspective: isMobile ? 900 : 1400,
+                  transformStyle: isMobile ? undefined : "preserve-3d",
+                  willChange: "transform, opacity",
                 }}
                 initial={false}
                 animate={{
@@ -115,9 +117,8 @@ export function CoverflowCarousel({
                   scale: target.scale,
                   opacity: target.opacity,
                   z: target.z,
-                  filter: target.filter,
                 }}
-                transition={spring}
+                transition={transition}
               >
                 {isCenter ? (
                   <SwipeCard

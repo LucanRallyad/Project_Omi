@@ -18,9 +18,11 @@ export async function probeCoverUrl(url: string): Promise<boolean> {
 
   const ok = await new Promise<boolean>((resolve) => {
     const img = new Image();
+    const timeoutMs =
+      typeof window !== "undefined" && window.innerWidth < 768 ? 2200 : 4500;
     const timer = window.setTimeout(() => {
       resolve(false);
-    }, 4500);
+    }, timeoutMs);
     img.onload = () => {
       window.clearTimeout(timer);
       resolve(img.naturalWidth > 40 && img.naturalHeight > 40);

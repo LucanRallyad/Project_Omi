@@ -88,4 +88,4 @@ export interface TasteWeight {
   weight: number;
 }
 
-export type ShelfView = "discover" | "saved" | "liked" | "want-to-read";
+export type ShelfView = "discover" | "saved" | "liked" | "want-to-read" | "reading-map";

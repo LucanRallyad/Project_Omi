@@ -179,12 +179,23 @@ export async function fetchCoverUrl(book: Book): Promise<string | null> {
   const cached = await getCachedMeta(book.key);
   if (cached?.coverUrl) return cached.coverUrl;
 
+  const instant = getLibraryCoverUrl(book.key) ?? book.seedCoverUrl;
+  if (instant) {
+    void patchCachedCover(book.key, instant);
+    void resolveBestCover(book)
+      .then((upgraded) => {
+        if (upgraded && upgraded !== instant) void patchCachedCover(book.key, upgraded);
+      })
+      .catch(() => undefined);
+    return instant;
+  }
+
   const best = await resolveBestCover(book);
   if (best) {
     void patchCachedCover(book.key, best);
     return best;
   }
-  return book.seedCoverUrl ?? null;
+  return null;
 }
 
 function mergeCategories(...lists: (string[] | undefined)[]): string[] {
@@ -244,6 +255,12 @@ export async function fetchBookMeta(book: Book): Promise<BookMeta> {
   if (cached?.description) return cached;
 
   const bakedDescription = getLibraryDescription(book.key);
+  const fast = await fetchBookMetaQuick(book, bakedDescription, cached);
+  if (fast.description) {
+    await setCachedMeta(book.key, fast);
+    return fast;
+  }
+
   const [hc, ol, volumes, grDesc] = await Promise.all([
     fetchHardcoverMeta(book),
     fetchOpenLibraryMeta(book),
@@ -255,6 +272,7 @@ export async function fetchBookMeta(book: Book): Promise<BookMeta> {
 
   const description = pickBestDescription(
     bakedDescription,
+    fast.description,
     hc?.description,
     ol.description,
     googleDescriptions(volumes),
@@ -262,18 +280,64 @@ export async function fetchBookMeta(book: Book): Promise<BookMeta> {
   );
 
   const meta: BookMeta = {
-    coverUrl: cached?.coverUrl ?? (await pickCoverUrl(book, hc, ol, vol)),
+    coverUrl:
+      cached?.coverUrl ??
+      fast.coverUrl ??
+      (await pickCoverUrl(book, hc, ol, vol)),
     description,
-    categories: mergeCategories(cached?.categories, hc?.categories, ol.categories, info?.categories, book.categories),
-    price: vol ? formatPrice(vol) : cached?.price ?? null,
-    buyUrl: vol?.saleInfo?.buyLink ?? cached?.buyUrl ?? bookshopSearch(book),
-    pageCount: hc?.pageCount ?? ol.pageCount ?? info?.pageCount ?? cached?.pageCount ?? null,
-    publishedDate: hc?.publishedDate ?? ol.publishedDate ?? info?.publishedDate ?? cached?.publishedDate ?? null,
-    previewLink: ol.previewLink ?? cleanGoogleThumb(info?.previewLink) ?? cached?.previewLink ?? null,
+    categories: mergeCategories(
+      cached?.categories,
+      fast.categories,
+      hc?.categories,
+      ol.categories,
+      info?.categories,
+      book.categories
+    ),
+    price: vol ? formatPrice(vol) : fast.price ?? cached?.price ?? null,
+    buyUrl: vol?.saleInfo?.buyLink ?? fast.buyUrl ?? cached?.buyUrl ?? bookshopSearch(book),
+    pageCount: hc?.pageCount ?? ol.pageCount ?? info?.pageCount ?? fast.pageCount ?? cached?.pageCount ?? null,
+    publishedDate:
+      hc?.publishedDate ??
+      ol.publishedDate ??
+      info?.publishedDate ??
+      fast.publishedDate ??
+      cached?.publishedDate ??
+      null,
+    previewLink:
+      ol.previewLink ?? cleanGoogleThumb(info?.previewLink) ?? fast.previewLink ?? cached?.previewLink ?? null,
   };
 
   await setCachedMeta(book.key, meta);
   return meta;
+}
+
+/** Fast path: baked copy, Open Library + one Google hit — skips Hardcover/Goodreads. */
+export async function fetchBookMetaQuick(
+  book: Book,
+  bakedDescription?: string | null,
+  cached?: BookMeta | null
+): Promise<BookMeta> {
+  const baked = bakedDescription ?? getLibraryDescription(book.key);
+  const base = cached ?? null;
+
+  const [ol, volumes] = await Promise.all([
+    fetchOpenLibraryMeta(book),
+    fetchGoogleVolumes(book, 1),
+  ]);
+  const vol = volumes[0] ?? null;
+  const info = vol?.volumeInfo;
+  const description = pickBestDescription(baked, base?.description ?? null, ol.description, info?.description);
+
+  return {
+    coverUrl: base?.coverUrl ?? getLibraryCoverUrl(book.key) ?? book.seedCoverUrl ?? null,
+    description,
+    categories: mergeCategories(base?.categories, ol.categories, info?.categories, book.categories),
+    price: vol ? formatPrice(vol) : base?.price ?? null,
+    buyUrl: vol?.saleInfo?.buyLink ?? base?.buyUrl ?? bookshopSearch(book),
+    pageCount: ol.pageCount ?? info?.pageCount ?? base?.pageCount ?? null,
+    publishedDate: ol.publishedDate ?? info?.publishedDate ?? base?.publishedDate ?? null,
+    previewLink: ol.previewLink ?? cleanGoogleThumb(info?.previewLink) ?? base?.previewLink ?? null,
+  };
 }
 
 interface GoogleSearchVolume {
@@ -463,9 +527,24 @@ export async function prefetchMeta(books: Book[], concurrency = 3): Promise<void
     while (queue.length) {
       const book = queue.shift();
       if (!book) break;
+      const cached = await getCachedMeta(book.key);
+      if (cached?.description) continue;
+      const baked = getLibraryDescription(book.key);
+      const quick = await fetchBookMetaQuick(book, baked, cached).catch(() => null);
+      if (quick?.description) {
+        await setCachedMeta(book.key, quick);
+        continue;
+      }
       await fetchBookMeta(book).catch(() => undefined);
-      await new Promise((r) => setTimeout(r, 150));
+      await new Promise((r) => setTimeout(r, 120));
     }
   });
   await Promise.all(workers);
+}
+
+/** Warm description cache for the next cards in the discover queue. */
+export function prefetchDiscoverMeta(books: Book[], startIndex: number, count = 5): void {
+  const slice = books.slice(startIndex, startIndex + count);
+  if (!slice.length) return;
+  void prefetchMeta(slice, 2);
 }

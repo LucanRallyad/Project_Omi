@@ -28,17 +28,19 @@ import { WelcomeScreen } from "./components/WelcomeScreen";
 import { NavBar } from "./components/NavBar";
 import { CoverflowCarousel } from "./components/CoverflowCarousel";
 import { CarouselSkeleton } from "./components/CarouselSkeleton";
-const BookDetail = lazy(() =>
-  import("./components/BookDetail").then((m) => ({ default: m.BookDetail }))
-);
 import { Shelf, type ShelfItem } from "./components/Shelf";
 import { EmptyState } from "./components/EmptyState";
 import { UndoToast } from "./components/UndoToast";
 import { PasscodeGate } from "./components/PasscodeGate";
 import type { SwipeAction } from "./components/SwipeCard";
-import { initLibrary } from "./lib/libraryStore";
+import { initLibrary, getLibrary } from "./lib/libraryStore";
 import { useViewport } from "./hooks/useViewport";
+
+const BookDetail = lazy(() =>
+  import("./components/BookDetail").then((m) => ({ default: m.BookDetail }))
+);
 import { useShellTheme } from "./hooks/useShellTheme";
+import { ReadingGraph } from "./components/ReadingGraph";
 
 interface UndoState {
   book: Book;
@@ -70,7 +72,7 @@ export default function App() {
   const [view, setView] = useState<ShelfView>(() => {
     if (typeof window === "undefined") return "discover";
     const v = new URLSearchParams(window.location.search).get("view");
-    return (["discover", "saved", "liked", "want-to-read"] as const).includes(v as ShelfView)
+    return (["discover", "saved", "liked", "want-to-read", "reading-map"] as const).includes(v as ShelfView)
       ? (v as ShelfView)
       : "discover";
   });
@@ -201,10 +203,11 @@ export default function App() {
 
       void ensureCovers(first.slice(0, 8), first[0]?.key);
       prefetchDiscoverMeta(first, 0, 6);
-      const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 1200));
-      idle(() => {
-        void prefetchMeta(wantToReadBooks(), 2);
-      });
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(() => void prefetchMeta(wantToReadBooks(), 2));
+      } else {
+        setTimeout(() => void prefetchMeta(wantToReadBooks(), 2), 1200);
+      }
     })();
     return () => {
       cancelled = true;
@@ -382,8 +385,6 @@ export default function App() {
                 setDetailBook(null);
                 setView(next);
               }}
-              savedCount={saved.length}
-              likedCount={likedKeys.length}
               dark={shellDark}
               hidden={hideNav}
             />
@@ -476,6 +477,10 @@ export default function App() {
                     message="Books you marked 'Want to Read' on Goodreads will show up here."
                   />
                 ))}
+
+              {view === "reading-map" && (
+                <ReadingGraph books={getLibrary()} dark={shellDark} />
+              )}
             </main>
           </>
         )}
@@ -483,17 +488,19 @@ export default function App() {
         {/* Detail overlay */}
         <AnimatePresence>
           {detailBook && (
-            <BookDetail
-              key={detailBook.key}
-              book={detailBook}
-              saved={savedKeys.has(detailBook.key)}
-              onToggleSave={() => handleToggleSave(detailBook)}
-              showActions={
-                view === "discover" && !!activeBook && detailBook.key === activeBook.key
-              }
-              onAction={handleAction}
-              onClose={() => setDetailBook(null)}
-            />
+            <Suspense fallback={null}>
+              <BookDetail
+                key={detailBook.key}
+                book={detailBook}
+                saved={savedKeys.has(detailBook.key)}
+                onToggleSave={() => handleToggleSave(detailBook)}
+                showActions={
+                  view === "discover" && !!activeBook && detailBook.key === activeBook.key
+                }
+                onAction={handleAction}
+                onClose={() => setDetailBook(null)}
+              />
+            </Suspense>
           )}
         </AnimatePresence>
 

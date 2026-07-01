@@ -37,12 +37,12 @@ export function BookDetail({
   return (
     <motion.div
       className="fixed inset-0 z-50 flex items-stretch justify-center"
-      initial={{ backdropFilter: "blur(0px)" }}
-      animate={{ backdropFilter: "blur(10px)" }}
-      exit={{ backdropFilter: "blur(0px)" }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
     >
       <motion.div
-        className="absolute inset-0 bg-espresso/50"
+        className={`absolute inset-0 ${isMobile ? "bg-espresso/55" : "bg-espresso/50 backdrop-blur-sm"}`}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
