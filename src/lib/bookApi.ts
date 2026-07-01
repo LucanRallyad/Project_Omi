@@ -5,20 +5,26 @@
  * loads lazily for detail views. Price / buy links from Google Books.
  */
 import type { Book, BookMeta } from "../types";
+import { firstValidCoverUrl } from "./coverUtils";
 import { getCachedMeta, patchCachedCover, setCachedMeta } from "./cache";
 import {
   fetchHardcoverCoverUrl,
   fetchHardcoverMeta,
   searchByAuthor as hcByAuthor,
   searchByAuthorAndSubject as hcByAuthorSubject,
+  searchBySeries as hcBySeries,
   searchBySubject as hcBySubject,
+  searchByTitle as hcByTitle,
 } from "./hardcover";
 import {
   fetchOpenLibraryCoverUrl,
   fetchOpenLibraryMeta,
   isOpenLibraryApiAvailable,
   searchByAuthor as olByAuthor,
+  searchByAuthorAndSubject as olByAuthorSubject,
+  searchBySeries as olBySeries,
   searchBySubject as olBySubject,
+  searchByTitle as olByTitle,
 } from "./openLibrary";
 import { dedupe, RateLimiter } from "./requestQueue";
 
@@ -141,45 +147,30 @@ async function fetchGoogleCoverUrl(book: Book): Promise<string | null> {
 }
 
 /** First source to return a URL wins — skip OL network race when its API is down. */
-function raceCoverSources(book: Book): Promise<string | null> {
-  const sources: (() => Promise<string | null>)[] = [
-    () => fetchHardcoverCoverUrl(book),
-  ];
-  if (isOpenLibraryApiAvailable() || book.isbn13) {
-    sources.push(() => fetchOpenLibraryCoverUrl(book));
-  }
-  sources.push(() => fetchGoogleCoverUrl(book));
+async function resolveBestCover(book: Book): Promise<string | null> {
+  const [hc, google, ol] = await Promise.all([
+    fetchHardcoverCoverUrl(book).catch(() => null),
+    fetchGoogleCoverUrl(book).catch(() => null),
+    fetchOpenLibraryCoverUrl(book).catch(() => null),
+  ]);
 
-  return new Promise((resolve) => {
-    let remaining = sources.length;
-    let settled = false;
-
-    const finish = (url: string | null) => {
-      if (settled) return;
-      if (url) {
-        settled = true;
-        resolve(url);
-        return;
-      }
-      remaining -= 1;
-      if (remaining === 0) resolve(null);
-    };
-
-    for (const source of sources) {
-      source().then(finish).catch(() => finish(null));
-    }
-  });
+  return firstValidCoverUrl([hc, google, ol, book.seedCoverUrl]);
 }
 
 /**
- * Fast cover-only fetch for the carousel. Uses cache → seed URL → parallel race.
+ * Fast cover-only fetch for the carousel. Uses cache → parallel lookup → validated
+ * best URL, with seed as last-resort fallback.
  */
 export async function fetchCoverUrl(book: Book): Promise<string | null> {
   const cached = await getCachedMeta(book.key);
   if (cached?.coverUrl) return cached.coverUrl;
-  const url = book.seedCoverUrl ?? (await raceCoverSources(book));
-  if (url) void patchCachedCover(book.key, url);
-  return url;
+
+  const best = await resolveBestCover(book);
+  if (best) {
+    void patchCachedCover(book.key, best);
+    return best;
+  }
+  return book.seedCoverUrl ?? null;
 }
 
 function mergeCategories(...lists: (string[] | undefined)[]): string[] {
@@ -210,6 +201,7 @@ function mergeBooks(...lists: Book[][]): Book[] {
         ...existing,
         series: existing.series ?? book.series,
         seriesNumber: existing.seriesNumber ?? book.seriesNumber,
+        isbn13: existing.isbn13 ?? book.isbn13,
         averageRating: existing.averageRating ?? book.averageRating,
         categories: mergeCategories(existing.categories, book.categories),
         seedCoverUrl: existing.seedCoverUrl ?? book.seedCoverUrl,
@@ -219,19 +211,18 @@ function mergeBooks(...lists: Book[][]): Book[] {
   return [...byKey.values()];
 }
 
-function pickCoverUrl(
+async function pickCoverUrl(
   book: Book,
   hc: Awaited<ReturnType<typeof fetchHardcoverMeta>>,
   ol: Awaited<ReturnType<typeof fetchOpenLibraryMeta>>,
   vol: GoogleVolume | null
-): string | null {
-  return (
-    book.seedCoverUrl ??
-    hc?.coverUrl ??
-    ol.coverUrl ??
-    bestGoogleCover(vol?.volumeInfo?.imageLinks) ??
-    null
-  );
+): Promise<string | null> {
+  return firstValidCoverUrl([
+    book.seedCoverUrl,
+    hc?.coverUrl,
+    bestGoogleCover(vol?.volumeInfo?.imageLinks),
+    ol.coverUrl,
+  ]);
 }
 
 export async function fetchBookMeta(book: Book): Promise<BookMeta> {
@@ -246,7 +237,7 @@ export async function fetchBookMeta(book: Book): Promise<BookMeta> {
   const info = vol?.volumeInfo;
 
   const meta: BookMeta = {
-    coverUrl: pickCoverUrl(book, hc, ol, vol),
+    coverUrl: await pickCoverUrl(book, hc, ol, vol),
     description: hc?.description ?? ol.description ?? info?.description?.replace(/<[^>]+>/g, "").trim() ?? null,
     categories: mergeCategories(hc?.categories, ol.categories, info?.categories, book.categories),
     price: vol ? formatPrice(vol) : null,
@@ -267,6 +258,7 @@ interface GoogleSearchVolume {
     averageRating?: number;
     industryIdentifiers?: { type: string; identifier: string }[];
     categories?: string[];
+    imageLinks?: GoogleImageLinks;
   };
 }
 
@@ -290,6 +282,7 @@ function volumeToBook(vol: GoogleSearchVolume): Book | null {
     goodreadsUrl: null,
     averageRating: info.averageRating ?? null,
     categories: info.categories ?? [],
+    seedCoverUrl: bestGoogleCover(info.imageLinks),
   };
 }
 
@@ -347,17 +340,10 @@ function cachedSearch(key: string, fn: () => Promise<Book[]>): Promise<Book[]> {
 }
 
 async function mergedSearch(fetchers: (() => Promise<Book[]>)[]): Promise<Book[]> {
-  const primary = await Promise.all(
-    fetchers.slice(0, -1).map((fn) => fn().catch(() => [] as Book[]))
+  const results = await Promise.all(
+    fetchers.map((fn) => fn().catch(() => [] as Book[]))
   );
-  let books = mergeBooks(...primary);
-
-  const googleFetcher = fetchers[fetchers.length - 1];
-  if (googleFetcher && books.length < 8 && !googleLimiter.isPaused()) {
-    const google = await googleFetcher().catch(() => [] as Book[]);
-    books = mergeBooks(books, google);
-  }
-  return books;
+  return mergeBooks(...results);
 }
 
 function olSearchAuthor(author: string): Promise<Book[]> {
@@ -373,7 +359,7 @@ export function searchByAuthor(author: string): Promise<Book[]> {
     mergedSearch([
       () => hcByAuthor(author),
       () => olSearchAuthor(author),
-      () => googleSearch(`inauthor:"${author}"`, 20),
+      () => (googleLimiter.isPaused() ? Promise.resolve([]) : googleSearch(`inauthor:"${author}"`, 30)),
     ])
   );
 }
@@ -383,7 +369,7 @@ export function searchBySubject(subject: string): Promise<Book[]> {
     mergedSearch([
       () => hcBySubject(subject),
       () => olSearchSubject(subject),
-      () => googleSearch(`subject:"${subject}"`, 20),
+      () => (googleLimiter.isPaused() ? Promise.resolve([]) : googleSearch(`subject:"${subject}"`, 30)),
     ])
   );
 }
@@ -392,19 +378,54 @@ export function searchByAuthorAndSubject(author: string, subject: string): Promi
   return cachedSearch(`author-subject:${author}:${subject}`, () =>
     mergedSearch([
       () => hcByAuthorSubject(author, subject),
-      () => googleSearch(`inauthor:"${author}" subject:"${subject}"`, 15),
+      () => (isOpenLibraryApiAvailable() ? olByAuthorSubject(author, subject) : Promise.resolve([])),
+      () =>
+        googleLimiter.isPaused()
+          ? Promise.resolve([])
+          : googleSearch(`inauthor:"${author}" subject:"${subject}"`, 25),
     ])
   );
 }
 
-/** Load covers for a batch; optionally upgrade with a higher-res race winner. */
+export function searchBySeries(series: string): Promise<Book[]> {
+  return cachedSearch(`series:${series}`, () =>
+    mergedSearch([
+      () => hcBySeries(series),
+      () => (isOpenLibraryApiAvailable() ? olBySeries(series) : Promise.resolve([])),
+      () =>
+        googleLimiter.isPaused()
+          ? Promise.resolve([])
+          : googleSearch(`intitle:"${series}"`, 25),
+    ])
+  );
+}
+
+/** Title lookup — useful for books missing ISBN or cover seeds. */
+export function searchByTitle(title: string, author?: string): Promise<Book[]> {
+  const cacheKey = `title:${title}:${author ?? ""}`;
+  return cachedSearch(cacheKey, () =>
+    mergedSearch([
+      () => hcByTitle(title, author),
+      () => (isOpenLibraryApiAvailable() ? olByTitle(title, author) : Promise.resolve([])),
+      () =>
+        googleLimiter.isPaused()
+          ? Promise.resolve([])
+          : googleSearch(
+              author ? `intitle:"${title}" inauthor:"${author}"` : `intitle:"${title}"`,
+              8
+            ),
+    ])
+  );
+}
+
+/** Load covers for a batch; upgrades weak seed URLs when a better source validates. */
 export async function prefetchCovers(books: Book[], concurrency = 8): Promise<void> {
   const queue = [...books];
   const workers = Array.from({ length: concurrency }, async () => {
     while (queue.length) {
       const book = queue.shift();
       if (!book) break;
-      const url = book.seedCoverUrl ?? (await fetchCoverUrl(book));
+      const url = await fetchCoverUrl(book);
       await patchCachedCover(book.key, url);
     }
   });

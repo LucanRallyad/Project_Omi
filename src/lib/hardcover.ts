@@ -125,7 +125,7 @@ const SEARCH_BOOKS = `
   }
 `;
 
-async function searchBooks(query: string, perPage = 20): Promise<Book[]> {
+async function searchBooks(query: string, perPage = 30): Promise<Book[]> {
   const data = await hardcoverQuery<{ search?: { results?: unknown } }>(SEARCH_BOOKS, {
     query,
     perPage,
@@ -137,7 +137,7 @@ async function searchBooks(query: string, perPage = 20): Promise<Book[]> {
 }
 
 export function searchByAuthor(author: string): Promise<Book[]> {
-  return searchBooks(author, 25).then((books) =>
+  return searchBooks(author, 30).then((books) =>
     books.filter((b) => b.author.toLowerCase().includes(author.toLowerCase().split(" ")[0] ?? author))
   );
 }
@@ -151,13 +151,40 @@ export function searchBySubject(subject: string): Promise<Book[]> {
 }
 
 export function searchByAuthorAndSubject(author: string, subject: string): Promise<Book[]> {
-  return searchBooks(`${author} ${subject}`, 20).then((books) =>
+  return searchBooks(`${author} ${subject}`, 25).then((books) =>
     books.filter(
       (b) =>
         b.author.toLowerCase().includes(author.toLowerCase().split(" ")[0] ?? author) &&
         b.categories?.some((c) => c.toLowerCase().includes(subject.toLowerCase()))
     )
   );
+}
+
+export function searchBySeries(series: string): Promise<Book[]> {
+  return searchBooks(series, 25).then((books) =>
+    books.filter(
+      (b) =>
+        b.series?.toLowerCase().includes(series.toLowerCase()) ||
+        b.title.toLowerCase().includes(series.toLowerCase())
+    )
+  );
+}
+
+export function searchByTitle(title: string, author?: string): Promise<Book[]> {
+  const query = author ? `${title} ${author}` : title;
+  return searchBooks(query, 8).then((books) => {
+    const titleKey = title.toLowerCase().trim();
+    const authorKey = author?.toLowerCase().trim();
+    return books.filter((b) => {
+      const matchesTitle =
+        b.title.toLowerCase().includes(titleKey) || titleKey.includes(b.title.toLowerCase());
+      if (!authorKey) return matchesTitle;
+      return (
+        matchesTitle &&
+        b.author.toLowerCase().includes(authorKey.split(" ")[0] ?? authorKey)
+      );
+    });
+  });
 }
 
 const EDITION_BY_ISBN13 = `
@@ -244,22 +271,30 @@ function searchDocToMeta(doc: HcSearchDocument): HardcoverMeta {
   };
 }
 
-/** Cover URL only — edition lookup, no title search fallback. */
+/** Cover URL — edition lookup by ISBN, then title search fallback. */
 export async function fetchHardcoverCoverUrl(book: Book): Promise<string | null> {
-  if (book.seedCoverUrl) return book.seedCoverUrl;
-  if (!book.isbn13) return null;
-
-  let data = await hardcoverQuery<{ editions?: HcEdition[] }>(EDITION_BY_ISBN13, {
-    isbn: book.isbn13,
-  });
-  let edition = data?.editions?.[0];
-  if (!edition && book.isbn13.startsWith("978")) {
-    const isbn10 = book.isbn13.slice(3, 12);
-    data = await hardcoverQuery<{ editions?: HcEdition[] }>(EDITION_BY_ISBN10, { isbn: isbn10 });
-    edition = data?.editions?.[0];
+  if (book.isbn13) {
+    let data = await hardcoverQuery<{ editions?: HcEdition[] }>(EDITION_BY_ISBN13, {
+      isbn: book.isbn13,
+    });
+    let edition = data?.editions?.[0];
+    if (!edition && book.isbn13.startsWith("978")) {
+      const isbn10 = book.isbn13.slice(3, 12);
+      data = await hardcoverQuery<{ editions?: HcEdition[] }>(EDITION_BY_ISBN10, { isbn: isbn10 });
+      edition = data?.editions?.[0];
+    }
+    if (edition) {
+      const url = edition.image?.url ?? edition.book?.image?.url ?? null;
+      if (url) return url;
+    }
   }
-  if (!edition) return null;
-  return edition.image?.url ?? edition.book?.image?.url ?? null;
+
+  const query = `${book.title} ${book.author}`;
+  const data = await hardcoverQuery<{ search?: { results?: unknown } }>(SEARCH_BY_TITLE, {
+    query,
+  });
+  const doc = matchSearchDoc(parseSearchHits(data?.search?.results), book);
+  return doc?.image?.url ?? null;
 }
 
 /** Fetch cover + metadata from Hardcover (edition lookup or title search). */

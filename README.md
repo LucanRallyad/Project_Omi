@@ -30,6 +30,7 @@ and [Google Books](https://developers.google.com/books) (price + buy links).
 ```bash
 npm install
 npm run parse-library   # generates src/data/library.json from the Goodreads export
+npm run seed-library    # syncs read/DNF books + taste weights to Supabase
 npm run dev             # http://localhost:5173
 ```
 

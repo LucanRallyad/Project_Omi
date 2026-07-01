@@ -152,6 +152,20 @@ export function searchBySubject(subject: string): Promise<Book[]> {
   return openLibrarySearch({ subject });
 }
 
+export function searchByAuthorAndSubject(author: string, subject: string): Promise<Book[]> {
+  return openLibrarySearch({ author, subject });
+}
+
+export function searchBySeries(series: string): Promise<Book[]> {
+  return openLibrarySearch({ q: series, subject: "fiction" }, 25);
+}
+
+export function searchByTitle(title: string, author?: string): Promise<Book[]> {
+  const params: Record<string, string> = { title };
+  if (author) params.author = author;
+  return openLibrarySearch(params, 5);
+}
+
 async function fetchEditionByIsbn(isbn: string): Promise<OlEditionDetails | null> {
   const url = `${OL_BOOKS}?bibkeys=ISBN:${encodeURIComponent(
     isbn
@@ -189,14 +203,16 @@ export function openLibraryIsbnCover(isbn13: string): string {
   return `https://covers.openlibrary.org/b/isbn/${isbn13}-L.jpg?default=false`;
 }
 
-/** Fast cover lookup — ISBN CDN URL only; no search API unless needed. */
+/** Cover URL candidates from Open Library (search cover_i preferred over bare ISBN CDN). */
 export async function fetchOpenLibraryCoverUrl(book: Book): Promise<string | null> {
-  if (book.seedCoverUrl) return book.seedCoverUrl;
-  if (book.isbn13) return openLibraryIsbnCover(book.isbn13);
-  if (!isOpenLibraryApiAvailable()) return null;
+  if (!isOpenLibraryApiAvailable() && !book.isbn13) return null;
 
-  const doc = await findSearchDoc(book);
+  const doc = isOpenLibraryApiAvailable() ? await findSearchDoc(book) : null;
   if (doc?.cover_i) return coverUrlFromId(doc.cover_i);
+
+  const isbn13 = book.isbn13 ?? pickIsbn13(doc?.isbn);
+  if (isbn13) return openLibraryIsbnCover(isbn13);
+
   return null;
 }
 

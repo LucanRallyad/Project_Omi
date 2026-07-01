@@ -3,11 +3,10 @@ import { AnimatePresence } from "framer-motion";
 import { Bookmark, Heart, BookMarked, Sparkles } from "lucide-react";
 import type { Book, SavedBook, ShelfView, SwipeDirection, TasteWeight } from "./types";
 import {
-  applyLearnedWeights,
-  buildTasteProfile,
   generateCandidates,
   learnFromSwipe,
   nonCandidateLibraryKeys,
+  resolveTasteProfile,
   wantToReadBooks,
   type TasteProfile,
 } from "./lib/recommender";
@@ -99,16 +98,14 @@ export default function App() {
     const pending = books.filter((b) => !coversRef.current.has(b.key));
     if (!pending.length) return;
 
-    // Instant covers from search/API seeds — zero network.
+    // Instant preview from search seeds while full lookup runs.
     for (const book of pending) {
       if (book.seedCoverUrl) {
-        coversRef.current.add(book.key);
-        registerBook(book, book.seedCoverUrl, book.categories);
         setCovers((prev) => new Map(prev).set(book.key, book.seedCoverUrl!));
       }
     }
 
-    let queue = pending.filter((b) => !b.seedCoverUrl);
+    let queue = [...pending];
     if (priorityKey) {
       queue = [
         ...queue.filter((b) => b.key === priorityKey),
@@ -124,7 +121,7 @@ export default function App() {
         registerBook(book, url, book.categories);
         setCovers((prev) => new Map(prev).set(book.key, url));
       } catch {
-        setCovers((prev) => new Map(prev).set(book.key, null));
+        setCovers((prev) => new Map(prev).set(book.key, book.seedCoverUrl ?? null));
       }
     };
 
@@ -153,7 +150,7 @@ export default function App() {
       setLikedKeys(swipes.filter((s) => s.direction === "like").map((s) => s.book_key));
       weightsRef.current = learned;
 
-      const profile = applyLearnedWeights(buildTasteProfile(), learned);
+      const profile = resolveTasteProfile(learned);
       profileRef.current = profile;
 
       const exclude = new Set<string>();

@@ -8,120 +8,43 @@
  * 3. Scores + ranks candidates against the taste profile.
  * 4. Learns online: each like/pass nudges the relevant author/genre weights.
  */
-import type { Book, LibraryBook, SwipeDirection, TasteWeight } from "../types";
-import libraryData from "../data/library.json";
-import { searchByAuthor, searchByAuthorAndSubject, searchBySubject } from "./bookApi";
+import type { Book, SwipeDirection, TasteWeight } from "../types";
+import {
+  buildTasteProfile,
+  libraryBooks,
+  nonCandidateLibraryKeys,
+  profileFromWeights,
+  resolveTasteProfile,
+  tasteWeightsFromProfile,
+  wantToReadBookFromLibrary,
+  wantToReadLibraryBooks,
+  type TasteProfile,
+} from "./libraryProfile";
+import { searchByAuthor, searchByAuthorAndSubject, searchBySeries, searchBySubject } from "./bookApi";
 import { dedupe, runPool, sleep } from "./requestQueue";
-import { openLibraryIsbnCover } from "./openLibrary";
 
-const library = libraryData as unknown as LibraryBook[];
-
-/** Map shelf tags to broad genre/subject terms book APIs understand. */
-const TAG_TO_SUBJECT: Record<string, string> = {
-  romance: "Romance",
-  "rom-coms": "Romantic comedy",
-  lgbtq: "LGBT",
-  booktok: "Fiction",
-  favorites: "Fiction",
+export {
+  buildTasteProfile,
+  libraryBooks,
+  nonCandidateLibraryKeys,
+  profileFromWeights,
+  resolveTasteProfile,
+  tasteWeightsFromProfile,
+  type TasteProfile,
 };
 
-export interface TasteProfile {
-  authorWeights: Map<string, number>;
-  genreWeights: Map<string, number>;
-  topAuthors: string[];
-  topGenres: string[];
-}
-
-/**
- * Books to never recommend: already read, currently reading, or DNF.
- * Want-to-read books are intentionally excluded here because they are surfaced
- * as high-priority *candidates* instead.
- */
-export function nonCandidateLibraryKeys(): string[] {
-  return library.filter((b) => b.status !== "want-to-read").map((b) => b.key);
-}
-
 export function wantToReadBooks(): Book[] {
-  return library
-    .filter((b) => b.status === "want-to-read")
-    .map((b) => ({
-      key: b.key,
-      title: b.cleanTitle,
-      author: b.author,
-      series: b.series,
-      seriesNumber: b.seriesNumber,
-      isbn13: b.isbn13,
-      goodreadsUrl: b.goodreadsUrl,
-      averageRating: b.averageRating,
-      reason: "On your Want to Read shelf",
-      fromWantToRead: true,
-      seedCoverUrl: b.isbn13 ? openLibraryIsbnCover(b.isbn13) : null,
-    }));
-}
-
-/** Rating (1-5) -> contribution centered around a neutral 3-star read. */
-function ratingWeight(rating: number | null): number {
-  if (rating == null) return 0.5; // read but unrated: mild positive
-  return rating - 3; // amazing=+2 ... did not like=-2
-}
-
-export function buildTasteProfile(): TasteProfile {
-  const authorWeights = new Map<string, number>();
-  const genreWeights = new Map<string, number>();
-
-  for (const book of library) {
-    // DNF applies a negative signal like a low rating; want-to-read is a mild
-    // positive intent signal; read uses the star rating.
-    let weight: number;
-    if (book.status === "did-not-finish") weight = -1.5;
-    else if (book.status === "want-to-read") weight = 0.75;
-    else weight = ratingWeight(book.rating);
-
-    authorWeights.set(book.author, (authorWeights.get(book.author) ?? 0) + weight);
-
-    for (const tag of book.tags) {
-      const subject = TAG_TO_SUBJECT[tag] ?? tag;
-      // Favorites shelf is a strong endorsement of the book's genres.
-      const tagBoost = tag === "favorites" ? weight + 1 : weight;
-      genreWeights.set(subject, (genreWeights.get(subject) ?? 0) + tagBoost);
-    }
-  }
-
-  const topAuthors = [...authorWeights.entries()]
-    .filter(([, w]) => w > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 12)
-    .map(([a]) => a);
-
-  const topGenres = [...genreWeights.entries()]
-    .filter(([, w]) => w > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([g]) => g);
-
-  return { authorWeights, genreWeights, topAuthors, topGenres };
-}
-
-/** Merge learned weights (from swipes) into a fresh seed profile. */
-export function applyLearnedWeights(profile: TasteProfile, learned: TasteWeight[]): TasteProfile {
-  for (const w of learned) {
-    const map = w.feature_type === "author" ? profile.authorWeights : profile.genreWeights;
-    map.set(w.feature_value, (map.get(w.feature_value) ?? 0) + w.weight);
-  }
-  return profile;
+  return wantToReadLibraryBooks().map(wantToReadBookFromLibrary);
 }
 
 function scoreBook(book: Book, profile: TasteProfile): number {
   let score = 0;
 
   const authorW = profile.authorWeights.get(book.author);
-  if (authorW) score += authorW * 2; // author affinity is a strong signal
+  if (authorW) score += authorW * 2;
 
-  // We don't have candidate genres without another fetch, so use the average
-  // Goodreads/Google rating as a light popularity prior.
   if (book.averageRating) score += (book.averageRating - 3.5) * 0.8;
 
-  // Genre overlap from Google Books categories (when present on API candidates).
   if (book.categories?.length) {
     for (const cat of book.categories) {
       const genreW = profile.genreWeights.get(cat);
@@ -129,7 +52,7 @@ function scoreBook(book: Book, profile: TasteProfile): number {
     }
   }
 
-  if (book.fromWantToRead) score += 5; // her own explicit intent ranks first
+  if (book.fromWantToRead) score += 5;
 
   return score;
 }
@@ -166,27 +89,26 @@ export async function generateCandidates(
         .slice(0, limit)
         .map(({ book }) => book);
 
-    // Goodreads Want-to-Read shelf is enough to fill the queue — return immediately.
     if (pool.size >= limit) {
       const ranked = rank();
       ranked.forEach((b) => seen.add(b.key));
       return ranked;
     }
 
-    const authorTasks = profile.topAuthors.slice(0, 4).map(
+    const authorTasks = profile.topAuthors.slice(0, 6).map(
       (author) => async () => {
         const results = await searchByAuthor(author);
         for (const b of results) add(b, `Because you love ${author}`);
       }
     );
-    const genreTasks = profile.topGenres.slice(0, 2).map(
+    const genreTasks = profile.topGenres.slice(0, 4).map(
       (genre) => async () => {
         const results = await searchBySubject(genre);
         for (const b of results) add(b, `More ${genre.toLowerCase()} to fall for`);
       }
     );
-    const crossTasks = profile.topAuthors.slice(0, 2).flatMap((author) =>
-      profile.topGenres.slice(0, 1).map(
+    const crossTasks = profile.topAuthors.slice(0, 3).flatMap((author) =>
+      profile.topGenres.slice(0, 2).map(
         (genre) => async () => {
           const results = await searchByAuthorAndSubject(author, genre);
           for (const b of results) add(b, `${author} × ${genre.toLowerCase()}`);
@@ -194,10 +116,29 @@ export async function generateCandidates(
       )
     );
 
-    await Promise.race([runPool([...authorTasks, ...genreTasks, ...crossTasks], 2, 120), sleep(4000)]);
+    const lovedSeries = new Set<string>();
+    for (const book of libraryBooks()) {
+      if (
+        book.series &&
+        (book.status === "read" || book.status === "want-to-read") &&
+        (book.rating ?? book.averageRating ?? 0) >= 4
+      ) {
+        lovedSeries.add(book.series);
+      }
+    }
+    const seriesTasks = [...lovedSeries].slice(0, 4).map(
+      (series) => async () => {
+        const results = await searchBySeries(series);
+        for (const b of results) add(b, `More from ${series}`);
+      }
+    );
+
+    await Promise.race([
+      runPool([...authorTasks, ...genreTasks, ...crossTasks, ...seriesTasks], 3, 80),
+      sleep(7000),
+    ]);
 
     const ranked = rank();
-
     ranked.forEach((b) => seen.add(b.key));
     return ranked;
   });
@@ -226,8 +167,4 @@ export function learnFromSwipe(
     weights.push({ feature_type: "genre", feature_value: genre, weight: delta * 0.8 });
   }
   return weights;
-}
-
-export function libraryBooks(): LibraryBook[] {
-  return library;
 }

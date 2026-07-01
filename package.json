@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "parse-library": "tsx scripts/parseLibrary.ts",
+    "seed-library": "tsx scripts/parseLibrary.ts && tsx scripts/seedLibrary.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
