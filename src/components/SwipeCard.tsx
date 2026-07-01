@@ -151,6 +151,7 @@ export const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function Sw
         layoutId={layoutId}
         showMeta
         priority
+        elevated={!isMobile}
       />
 
       <motion.div

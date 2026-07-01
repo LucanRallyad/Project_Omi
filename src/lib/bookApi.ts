@@ -83,18 +83,43 @@ function cleanGoogleThumb(url: string | undefined): string | null {
     .replace(/zoom=\d+/, "zoom=0");
 }
 
-function indigoSearch(book: Book): string {
-  const q = encodeURIComponent(`${book.title} ${book.author}`);
-  return `https://www.chapters.indigo.ca/en-ca/home/search/?keywords=${q}`;
+function isbn13To10(isbn13: string): string | null {
+  const digits = isbn13.replace(/\D/g, "");
+  if (digits.length === 10) return digits;
+  if (digits.length !== 13 || !digits.startsWith("978")) return null;
+
+  const core = digits.slice(3, 12);
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    sum += Number(core[i]) * (10 - i);
+  }
+  const check = (11 - (sum % 11)) % 11;
+  return `${core}${check === 10 ? "X" : String(check)}`;
 }
 
-function amazonSearch(book: Book): string {
-  const q = encodeURIComponent(`${book.title} ${book.author}`);
+/** Title + author query, with trailing series/parenthetical stripped. */
+function bookSearchQuery(book: Book): string {
+  const title = book.title.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  return `${title} ${book.author}`;
+}
+
+function indigoLink(book: Book): string {
+  const q = encodeURIComponent(book.isbn13 ?? bookSearchQuery(book));
+  return `https://www.indigo.ca/search?q=${q}`;
+}
+
+function amazonLink(book: Book): string {
+  if (book.isbn13) {
+    const isbn10 = isbn13To10(book.isbn13);
+    if (isbn10) return `https://www.amazon.ca/dp/${isbn10}`;
+    return `https://www.amazon.ca/s?k=${encodeURIComponent(book.isbn13)}&i=stripbooks`;
+  }
+  const q = encodeURIComponent(bookSearchQuery(book));
   return `https://www.amazon.ca/s?k=${q}&i=stripbooks`;
 }
 
 export function buyLinks(book: Book): { indigo: string; amazon: string } {
-  return { indigo: indigoSearch(book), amazon: amazonSearch(book) };
+  return { indigo: indigoLink(book), amazon: amazonLink(book) };
 }
 
 interface GoogleVolume {
@@ -324,7 +349,7 @@ export async function fetchBookMeta(book: Book): Promise<BookMeta> {
       book.categories
     ),
     price: vol ? formatPrice(vol) : fast.price ?? cached?.price ?? null,
-    buyUrl: vol?.saleInfo?.buyLink ?? fast.buyUrl ?? cached?.buyUrl ?? indigoSearch(book),
+    buyUrl: vol?.saleInfo?.buyLink ?? fast.buyUrl ?? cached?.buyUrl ?? indigoLink(book),
     pageCount: hc?.pageCount ?? ol.pageCount ?? info?.pageCount ?? fast.pageCount ?? cached?.pageCount ?? null,
     publishedDate:
       hc?.publishedDate ??
@@ -355,7 +380,7 @@ export async function fetchBookMetaQuick(
       description: baked,
       categories: base?.categories ?? book.categories ?? [],
       price: base?.price ?? null,
-      buyUrl: base?.buyUrl ?? indigoSearch(book),
+      buyUrl: base?.buyUrl ?? indigoLink(book),
       pageCount: base?.pageCount ?? null,
       publishedDate: base?.publishedDate ?? null,
       previewLink: base?.previewLink ?? null,
@@ -383,7 +408,7 @@ export async function fetchBookMetaQuick(
     description: pickBestDescription(description, googleDescriptions(volumes), info?.description),
     categories: mergeCategories(base?.categories, info?.categories, book.categories),
     price: vol ? formatPrice(vol) : base?.price ?? null,
-    buyUrl: vol?.saleInfo?.buyLink ?? base?.buyUrl ?? indigoSearch(book),
+    buyUrl: vol?.saleInfo?.buyLink ?? base?.buyUrl ?? indigoLink(book),
     pageCount: info?.pageCount ?? base?.pageCount ?? null,
     publishedDate: info?.publishedDate ?? base?.publishedDate ?? null,
     previewLink: cleanGoogleThumb(info?.previewLink) ?? base?.previewLink ?? null,

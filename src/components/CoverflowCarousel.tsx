@@ -76,10 +76,10 @@ export function CoverflowCarousel({
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col">
       <div
-        className={`relative z-10 flex min-h-0 w-full flex-1 justify-center overflow-hidden px-4 ${
+        className={`relative z-10 flex min-h-0 w-full flex-1 justify-center px-4 ${
           isMobile
-            ? "items-end pb-2 pt-[max(4.5rem,calc(env(safe-area-inset-top)+3.5rem))]"
-            : "items-center"
+            ? "items-center overflow-x-hidden overflow-y-visible pt-[max(4.5rem,calc(env(safe-area-inset-top)+3.5rem))] pb-4"
+            : "items-center overflow-hidden"
         }`}
         style={{ perspective: isMobile ? undefined : 1400, perspectiveOrigin: "50% 45%" }}
         onWheel={handleWheel}
@@ -157,6 +157,7 @@ export function CoverflowCarousel({
                       saved={savedKeys.has(book.key)}
                       onToggleSave={() => onToggleSave(book)}
                       showMeta={false}
+                      elevated={!isMobile}
                     />
                   </div>
                 )}

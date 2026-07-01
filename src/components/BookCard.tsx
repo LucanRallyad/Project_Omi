@@ -16,6 +16,8 @@ interface BookCardProps {
   dark?: boolean;
   /** Eager-load cover (center card). */
   priority?: boolean;
+  /** Drop shadow — off on mobile to avoid clip seams above the action bar. */
+  elevated?: boolean;
 }
 
 export function BookCard({
@@ -27,13 +29,19 @@ export function BookCard({
   showMeta = true,
   dark = false,
   priority = false,
+  elevated = true,
 }: BookCardProps) {
   const displayUrl = coverUrl ?? book.seedCoverUrl ?? null;
+  const shadow = elevated
+    ? dark
+      ? "shadow-[0_24px_60px_-16px_rgba(0,0,0,0.65)]"
+      : "shadow-card"
+    : "shadow-none";
 
   return (
     <div
       className={`relative h-full w-full overflow-hidden rounded-[1.4rem] ${
-        dark ? "bg-charcoal shadow-[0_24px_60px_-16px_rgba(0,0,0,0.65)]" : "bg-cream shadow-card"
+        dark ? `bg-charcoal ${shadow}` : `bg-cream ${shadow}`
       }`}
     >
       <BookCover

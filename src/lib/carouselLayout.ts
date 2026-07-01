@@ -33,8 +33,8 @@ export interface CardTransform {
 
 /** Reserve space for the floating nav + action bar on mobile discover (incl. safe areas). */
 export const MOBILE_CHROME = {
-  top: 96,
-  bottom: 120,
+  top: 88,
+  bottom: 108,
 };
 
 export function cardDimensions(width: number, height: number, isMobile: boolean) {

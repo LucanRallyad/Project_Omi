@@ -125,7 +125,7 @@ export default defineConfig(({ mode }) => {
           short_name: "Romi Books",
           description: "A cozy book recommender made just for Romi.",
           theme_color: "#F5F0E8",
-          background_color: "#1A1615",
+          background_color: "#F5F0E8",
           display: "standalone",
           orientation: "portrait",
           icons: [

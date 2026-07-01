@@ -24,11 +24,17 @@ html[data-shell="dark"] {
 html,
 body,
 #root {
-  height: 100%;
-  /* dvh tracks the visible viewport on mobile (address bar show/hide) */
   height: 100dvh;
-  /* iOS Safari fallback when dvh is unavailable */
-  min-height: -webkit-fill-available;
+  max-height: 100dvh;
+}
+
+@supports not (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100vh;
+    min-height: -webkit-fill-available;
+  }
 }
 
 body {
@@ -49,7 +55,11 @@ body {
   /* Fixed layer that bleeds into notch / home-indicator safe areas */
   .shell-backdrop {
     position: fixed;
+    inset: 0;
     z-index: 0;
+    width: 100%;
+    min-height: 100dvh;
+    min-height: calc(100dvh + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
     pointer-events: none;
     top: calc(-1 * env(safe-area-inset-top, 0px));
     right: calc(-1 * env(safe-area-inset-right, 0px));
@@ -64,8 +74,8 @@ body {
   /* Warm cream gradient for desktop backdrop */
   .bg-warm {
     background:
-      radial-gradient(120% 90% at 15% 10%, #fdf8f2 0%, transparent 55%),
-      radial-gradient(120% 90% at 85% 90%, #f9e4e9 0%, transparent 55%),
+      radial-gradient(90% 55% at 22% 24%, #faf6f1 0%, transparent 58%),
+      radial-gradient(90% 55% at 78% 76%, #f7ebe8 0%, transparent 58%),
       linear-gradient(135deg, #f5f0e8 0%, #efe6da 100%);
     background-color: #f5f0e8;
   }
