@@ -1,13 +1,28 @@
+import {
+  forceCenter,
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  type Simulation,
+  type SimulationLinkDatum,
+} from "d3-force";
 import type { GraphLink, GraphNode } from "./bookGraph";
-import { OBSIDIAN_FORCES, obsidianNodeRadius } from "./obsidianGraphConfig";
+import {
+  collisionRadius,
+  OBSIDIAN_FORCES,
+  obsidianChargeStrength,
+  obsidianNodeRadius,
+} from "./obsidianGraphConfig";
 
 export interface SimNode extends GraphNode {
   x: number;
   y: number;
-  vx: number;
-  vy: number;
-  fx: number | null;
-  fy: number | null;
+  vx?: number;
+  vy?: number;
+  fx?: number | null;
+  fy?: number | null;
+  index?: number;
   r: number;
 }
 
@@ -17,38 +32,33 @@ export interface SimLink {
   b: SimNode;
 }
 
+interface SimLinkDatum extends SimulationLinkDatum<SimNode> {
+  link: GraphLink;
+}
+
 /**
- * Live force simulation matching Obsidian Graph View factory physics.
- * Uses velocity Verlet integration (d3-force pattern) with Obsidian graph.json defaults.
+ * Force-directed layout via d3-force (Obsidian's original graph engine).
+ * @see https://obsidian.md/help/plugins/graph
  */
 export class GraphSimulation {
   readonly nodes: SimNode[];
-  readonly simLinks: SimLink[];
-
-  alpha = 1;
-  alphaMin = OBSIDIAN_FORCES.alphaMin;
-  alphaTarget = 0;
-  alphaDecay = OBSIDIAN_FORCES.alphaDecay;
-  velocityDecay = OBSIDIAN_FORCES.velocityDecay;
-
-  centerStrength = OBSIDIAN_FORCES.centerStrength;
-  chargeStrength = OBSIDIAN_FORCES.chargeStrength;
-  linkDistance = OBSIDIAN_FORCES.linkDistance;
-  linkStrength = OBSIDIAN_FORCES.linkStrength;
+  private readonly linkData: SimLinkDatum[];
+  private readonly simulation: Simulation<SimNode, SimLinkDatum>;
+  private pinnedCount = 0;
+  private active = true;
 
   constructor(nodes: GraphNode[], links: GraphLink[]) {
     const nodeById = new Map<string, SimNode>();
     const count = nodes.length;
-    const spread = Math.max(400, Math.sqrt(count) * 40);
+    const spread = Math.min(48, 10 + Math.sqrt(count) * 2.5);
 
+    // Obsidian "big bang" — nodes start close with random jitter, velocity 0.
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i];
-      const angle = (i / count) * Math.PI * 2 + (i % 7) * 0.12;
-      const ring = spread * (0.4 + (i % 5) * 0.1);
       nodeById.set(n.id, {
         ...n,
-        x: Math.cos(angle) * ring,
-        y: Math.sin(angle) * ring,
+        x: (Math.random() - 0.5) * spread,
+        y: (Math.random() - 0.5) * spread,
         vx: 0,
         vy: 0,
         fx: null,
@@ -58,112 +68,115 @@ export class GraphSimulation {
     }
 
     this.nodes = [...nodeById.values()];
-    this.simLinks = links
+    this.linkData = links
       .map((link) => {
-        const a = nodeById.get(link.source);
-        const b = nodeById.get(link.target);
-        if (!a || !b) return null;
-        return { link, a, b };
+        const source = nodeById.get(link.source);
+        const target = nodeById.get(link.target);
+        if (!source || !target) return null;
+        return { source, target, link };
       })
-      .filter(Boolean) as SimLink[];
+      .filter(Boolean) as SimLinkDatum[];
+
+    this.simulation = forceSimulation(this.nodes)
+      .force(
+        "link",
+        forceLink<SimNode, SimLinkDatum>(this.linkData)
+          .id((d) => d.id)
+          .distance(OBSIDIAN_FORCES.linkDistance)
+          .strength(OBSIDIAN_FORCES.linkStrength)
+      )
+      .force(
+        "charge",
+        forceManyBody<SimNode>()
+          .strength(obsidianChargeStrength())
+          .distanceMin(OBSIDIAN_FORCES.chargeDistanceMin)
+          .distanceMax(OBSIDIAN_FORCES.chargeDistanceMax)
+      )
+      .force("center", forceCenter<SimNode>(0, 0).strength(OBSIDIAN_FORCES.centerStrength))
+      .force(
+        "collide",
+        forceCollide<SimNode>()
+          .radius((d) => collisionRadius(d.r))
+          .strength(OBSIDIAN_FORCES.collideStrength)
+          .iterations(OBSIDIAN_FORCES.collideIterations)
+      )
+      .alpha(1)
+      .alphaDecay(OBSIDIAN_FORCES.alphaDecay)
+      .alphaMin(OBSIDIAN_FORCES.alphaMin)
+      .velocityDecay(OBSIDIAN_FORCES.velocityDecay);
+
+    this.simulation.stop();
+    this.warmup();
+  }
+
+  get simLinks(): SimLink[] {
+    return this.linkData.map((datum) => ({
+      link: datum.link,
+      a: datum.source as SimNode,
+      b: datum.target as SimNode,
+    }));
+  }
+
+  get alpha(): number {
+    return this.simulation.alpha();
+  }
+
+  get isActive(): boolean {
+    return this.active;
   }
 
   reheat(strength = 0.3): void {
-    this.alpha = Math.min(1, Math.max(this.alpha, strength));
+    this.active = true;
+    this.simulation.alpha(Math.max(this.simulation.alpha(), strength));
   }
 
-  pinNode(node: SimNode, x: number, y: number): void {
+  grabNode(node: SimNode, x: number, y: number): void {
+    const wasPinned = node.fx != null && node.fy != null;
     node.fx = x;
     node.fy = y;
     node.vx = 0;
     node.vy = 0;
-    this.reheat(0.5);
+    if (!wasPinned) this.pinnedCount += 1;
+    this.active = true;
+    this.simulation.alphaTarget(OBSIDIAN_FORCES.dragAlphaTarget);
+    if (!wasPinned) this.reheat(OBSIDIAN_FORCES.dragAlphaTarget);
+  }
+
+  moveNode(node: SimNode, x: number, y: number): void {
+    node.fx = x;
+    node.fy = y;
+    node.vx = 0;
+    node.vy = 0;
   }
 
   unpinNode(node: SimNode): void {
+    if (node.fx != null) this.pinnedCount = Math.max(0, this.pinnedCount - 1);
     node.fx = null;
     node.fy = null;
-    this.reheat(0.35);
+    node.vx = 0;
+    node.vy = 0;
+    if (this.pinnedCount === 0) {
+      this.simulation.alphaTarget(0);
+      this.simulation.alpha(Math.min(this.simulation.alpha(), 0.08));
+    }
+    this.resolveOverlaps();
+    this.active = true;
   }
 
-  tick(): boolean {
-    const hasPinned = this.nodes.some((n) => n.fx != null);
-    if (this.alpha < this.alphaMin && !hasPinned) return false;
+  step(): boolean {
+    if (!this.active) return false;
 
-    const alpha = this.alpha;
-    const n = this.nodes.length;
-
-    // Center force — Obsidian "center force" slider.
-    for (const node of this.nodes) {
-      if (node.fx != null) continue;
-      node.vx += -node.x * this.centerStrength * alpha * 0.08;
-      node.vy += -node.y * this.centerStrength * alpha * 0.08;
+    const alpha = this.simulation.alpha();
+    if (alpha <= OBSIDIAN_FORCES.sleepAlpha && this.pinnedCount === 0) {
+      this.sleep();
+      return false;
     }
 
-    // Many-body charge — Obsidian "repel force" (Coulomb, inverse square).
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const a = this.nodes[i];
-        const b = this.nodes[j];
-        let dx = a.x - b.x;
-        let dy = a.y - b.y;
-        let distSq = dx * dx + dy * dy;
-        if (distSq < 1) {
-          distSq = 1;
-          dx = (Math.random() - 0.5) * 0.01;
-          dy = (Math.random() - 0.5) * 0.01;
-        }
-        const force = (this.chargeStrength * alpha) / distSq;
-        const dist = Math.sqrt(distSq);
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        if (a.fx == null) {
-          a.vx += fx;
-          a.vy += fy;
-        }
-        if (b.fx == null) {
-          b.vx -= fx;
-          b.vy -= fy;
-        }
-      }
-    }
-
-    // Link force — uniform spring strength (Obsidian "link force" + "link distance").
-    for (const { a, b } of this.simLinks) {
-      let dx = b.x - a.x;
-      let dy = b.y - a.y;
-      const dist = Math.max(Math.hypot(dx, dy), 0.001);
-      const strength = this.linkStrength * alpha;
-      const delta = ((dist - this.linkDistance) / dist) * strength;
-      dx *= delta;
-      dy *= delta;
-      if (a.fx == null) {
-        a.vx += dx;
-        a.vy += dy;
-      }
-      if (b.fx == null) {
-        b.vx -= dx;
-        b.vy -= dy;
-      }
-    }
-
-    // Integrate (d3-force velocity Verlet).
-    for (const node of this.nodes) {
-      if (node.fx != null && node.fy != null) {
-        node.x = node.fx;
-        node.y = node.fy;
-        node.vx = 0;
-        node.vy = 0;
-        continue;
-      }
-      node.vx *= this.velocityDecay;
-      node.vy *= this.velocityDecay;
-      node.x += node.vx;
-      node.y += node.vy;
-    }
-
-    this.alpha += (this.alphaTarget - this.alpha) * this.alphaDecay;
-    return true;
+    const iterations = alpha > 0.5 ? 3 : alpha > 0.1 ? 2 : 1;
+    this.simulation.tick(iterations);
+    this.clampVelocities();
+    this.maybeSleep();
+    return this.active;
   }
 
   neighborsOf(nodeId: string): Set<string> {
@@ -187,5 +200,104 @@ export class GraphSimulation {
       maxY = Math.max(maxY, node.y + node.r);
     }
     return { minX, maxX, minY, maxY };
+  }
+
+  private warmup(): void {
+    for (let i = 0; i < OBSIDIAN_FORCES.warmupTicks && this.simulation.alpha() > 0.04; i++) {
+      this.simulation.tick(2);
+      this.clampVelocities();
+    }
+    this.resolveOverlaps();
+    this.zeroVelocities();
+    this.simulation.alpha(0);
+    this.active = false;
+  }
+
+  private sleep(): void {
+    this.zeroVelocities();
+    this.simulation.alpha(0);
+    this.simulation.alphaTarget(0);
+    this.active = false;
+  }
+
+  private maybeSleep(): void {
+    if (this.pinnedCount > 0) return;
+    const alpha = this.simulation.alpha();
+    if (alpha > OBSIDIAN_FORCES.sleepAlpha) return;
+    const moving = this.nodes.some(
+      (n) => Math.abs(n.vx ?? 0) > 0.02 || Math.abs(n.vy ?? 0) > 0.02
+    );
+    if (!moving) this.sleep();
+  }
+
+  private zeroVelocities(): void {
+    for (const node of this.nodes) {
+      node.vx = 0;
+      node.vy = 0;
+    }
+  }
+
+  private clampVelocities(): void {
+    const max = OBSIDIAN_FORCES.maxVelocity;
+    const maxSq = max * max;
+    for (const node of this.nodes) {
+      if (node.fx != null) continue;
+      const vx = node.vx ?? 0;
+      const vy = node.vy ?? 0;
+      const magSq = vx * vx + vy * vy;
+      if (magSq > maxSq) {
+        const scale = max / Math.sqrt(magSq);
+        node.vx = vx * scale;
+        node.vy = vy * scale;
+      }
+    }
+  }
+
+  private resolveOverlaps(): void {
+    const nodes = this.nodes;
+    const n = nodes.length;
+    const radii = nodes.map((node) => collisionRadius(node.r));
+
+    for (let pass = 0; pass < 3; pass++) {
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const a = nodes[i];
+          const b = nodes[j];
+          const minDist = radii[i] + radii[j];
+          let dx = b.x - a.x;
+          let dy = b.y - a.y;
+          let dist = Math.hypot(dx, dy);
+
+          if (dist < 1e-6) {
+            const angle = (i + j) * 2.399963;
+            dx = Math.cos(angle);
+            dy = Math.sin(angle);
+            dist = 1;
+          }
+
+          if (dist >= minDist) continue;
+
+          const overlap = (minDist - dist) / dist;
+          const ox = dx * overlap;
+          const oy = dy * overlap;
+          const aPinned = a.fx != null;
+          const bPinned = b.fx != null;
+
+          if (aPinned && bPinned) continue;
+          if (aPinned && !bPinned) {
+            b.x += ox;
+            b.y += oy;
+          } else if (!aPinned && bPinned) {
+            a.x -= ox;
+            a.y -= oy;
+          } else {
+            a.x -= ox * 0.5;
+            a.y -= oy * 0.5;
+            b.x += ox * 0.5;
+            b.y += oy * 0.5;
+          }
+        }
+      }
+    }
   }
 }

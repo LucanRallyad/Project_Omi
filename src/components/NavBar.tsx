@@ -28,7 +28,7 @@ export function NavBar({ view, onChange, dark = false, hidden = false }: NavBarP
         opacity: hidden ? 0 : 1,
       }}
       transition={{ type: "spring", stiffness: hidden ? 320 : 260, damping: hidden ? 32 : 26 }}
-      className={`fixed left-1/2 z-[60] flex max-w-[calc(100vw-1.5rem)] items-center gap-0.5 rounded-full px-1.5 py-1.5 shadow-soft ${
+      className={`fixed left-1/2 z-[60] flex max-w-[calc(100vw-1rem)] items-center gap-0.5 overflow-x-auto rounded-full px-1 py-1.5 shadow-soft no-scrollbar sm:max-w-[calc(100vw-1.5rem)] sm:px-1.5 ${
         dark ? "glass-dark" : "glass"
       }`}
       style={{
@@ -44,7 +44,7 @@ export function NavBar({ view, onChange, dark = false, hidden = false }: NavBarP
             key={tab.id}
             type="button"
             onClick={() => onChange(tab.id)}
-            className="relative flex touch-manipulation items-center gap-1.5 rounded-full px-2.5 py-2.5 text-sm font-medium transition-colors sm:px-3.5"
+            className="relative flex shrink-0 touch-manipulation items-center gap-1 rounded-full px-2 py-2.5 text-sm font-medium transition-colors sm:gap-1.5 sm:px-3.5"
           >
             {active && (
               <motion.span

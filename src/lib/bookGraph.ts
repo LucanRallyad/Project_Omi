@@ -20,19 +20,18 @@ export interface GraphLink {
   kind: LinkKind;
 }
 
-import { OBSIDIAN_COLORS, OBSIDIAN_GROUP_COLORS } from "./obsidianGraphConfig";
-
-const DEFAULT_NODE_COLOR = OBSIDIAN_COLORS.node;
+import { getGraphGroupColors, getGraphTheme } from "./obsidianGraphConfig";
 
 function linkKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
-function nodeColor(book: LibraryBook): string {
+function nodeColor(book: LibraryBook, isDark: boolean): string {
+  const groups = getGraphGroupColors(isDark);
   for (const tag of ["favorites", "romance", "rom-coms", "lgbtq", "booktok"] as ShelfTag[]) {
-    if (book.tags.includes(tag)) return OBSIDIAN_GROUP_COLORS[tag];
+    if (book.tags.includes(tag)) return groups[tag];
   }
-  return DEFAULT_NODE_COLOR;
+  return getGraphTheme(isDark).node;
 }
 
 /** Chain adjacent items in a group to avoid O(n²) author/tag meshes. */
@@ -59,7 +58,10 @@ function sortBooks(books: LibraryBook[]): LibraryBook[] {
 }
 
 /** Build nodes and edges for all read books in the library. */
-export function buildReadingGraph(books: LibraryBook[]): { nodes: GraphNode[]; links: GraphLink[] } {
+export function buildReadingGraph(
+  books: LibraryBook[],
+  isDark = false
+): { nodes: GraphNode[]; links: GraphLink[] } {
   const read = sortBooks(books.filter((b) => b.status === "read"));
   const seen = new Set<string>();
   const links: GraphLink[] = [];
@@ -74,7 +76,7 @@ export function buildReadingGraph(books: LibraryBook[]): { nodes: GraphNode[]; l
       series: book.series,
       rating: book.rating,
       degree: 0,
-      color: nodeColor(book),
+      color: nodeColor(book, isDark),
     });
   }
 

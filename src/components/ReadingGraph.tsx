@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Minus, Plus } from "lucide-react";
+import { Maximize2, Minus, Plus } from "lucide-react";
 import type { LibraryBook } from "../types";
 import { buildReadingGraph } from "../lib/bookGraph";
 import { GraphSimulation, type SimNode } from "../lib/graphSimulation";
 import {
-  OBSIDIAN_COLORS,
+  getGraphTheme,
   OBSIDIAN_DISPLAY,
   obsidianHitPadding,
   obsidianLabelOpacity,
@@ -33,6 +33,8 @@ function clamp(v: number, lo: number, hi: number): number {
 
 export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
   const { isMobile } = useViewport();
+  const isDark = isMobile;
+  const theme = getGraphTheme(isDark);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const simRef = useRef<GraphSimulation | null>(null);
@@ -53,7 +55,6 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
     dist: 0,
     scale: 1,
   });
-  const physicsFrameRef = useRef(0);
 
   const textFade = obsidianTextFadeForViewport(isMobile);
 
@@ -117,8 +118,8 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Obsidian workspace background.
-    ctx.fillStyle = OBSIDIAN_COLORS.background;
+    // Graph background.
+    ctx.fillStyle = theme.background;
     ctx.fillRect(0, 0, w, h);
 
     const { x: vx, y: vy, scale } = viewportRef.current;
@@ -135,11 +136,15 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
       ctx.beginPath();
       ctx.moveTo(cx + a.x * scale, cy + a.y * scale);
       ctx.lineTo(cx + b.x * scale, cy + b.y * scale);
-      ctx.strokeStyle = connected ? OBSIDIAN_COLORS.lineHighlight : OBSIDIAN_COLORS.dimLine;
-      ctx.globalAlpha = connected ? (highlight ? 1 : 0.55) : 1;
+      if (!highlight) {
+        ctx.strokeStyle = theme.line;
+      } else if (connected) {
+        ctx.strokeStyle = theme.lineHighlight;
+      } else {
+        ctx.strokeStyle = theme.dimLine;
+      }
       ctx.lineWidth = connected && highlight ? linkW * 1.4 : linkW;
       ctx.stroke();
-      ctx.globalAlpha = 1;
     }
 
     // Nodes.
@@ -154,13 +159,13 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
       ctx.beginPath();
       ctx.arc(sx, sy, Math.max(screenR, 2), 0, Math.PI * 2);
       ctx.fillStyle = dimmed
-        ? OBSIDIAN_COLORS.dimNode
+        ? theme.dimNode
         : isHovered || isHighlight
-          ? OBSIDIAN_COLORS.nodeHighlight
+          ? theme.nodeHighlight
           : node.color;
       ctx.fill();
 
-      ctx.strokeStyle = dimmed ? "transparent" : OBSIDIAN_COLORS.nodeCircle;
+      ctx.strokeStyle = dimmed ? "transparent" : theme.nodeCircle;
       ctx.lineWidth = isHovered ? 1.2 : 0.75;
       ctx.stroke();
 
@@ -173,7 +178,7 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
         ctx.font = `400 ${fontSize}px "Inter", "Segoe UI", system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillStyle = dimmed ? OBSIDIAN_COLORS.dimText : OBSIDIAN_COLORS.text;
+        ctx.fillStyle = dimmed ? theme.dimText : theme.text;
         ctx.globalAlpha = alpha;
         const maxLen = isMobile ? 28 : 36;
         const label =
@@ -182,18 +187,13 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
         ctx.globalAlpha = 1;
       }
     }
-  }, [isMobile, textFade]);
+  }, [isMobile, textFade, theme]);
 
   useEffect(() => {
     let running = true;
     const frame = () => {
       if (!running) return;
-      physicsFrameRef.current += 1;
-      const sim = simRef.current;
-      if (sim) {
-        const shouldTick = !isMobile || physicsFrameRef.current % 2 === 0 || sim.alpha > 0.08;
-        if (shouldTick) sim.tick();
-      }
+      simRef.current?.step();
       draw();
       requestAnimationFrame(frame);
     };
@@ -206,11 +206,11 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
   useEffect(() => {
     fittedRef.current = false;
     setReady(false);
-    const graph = buildReadingGraph(books);
+    const graph = buildReadingGraph(books, isDark);
     simRef.current = new GraphSimulation(graph.nodes, graph.links);
     setStats({ nodes: graph.nodes.length, links: graph.links.length });
     setReady(true);
-  }, [books]);
+  }, [books, isDark]);
 
   const fitToView = useCallback(() => {
     const sim = simRef.current;
@@ -258,7 +258,6 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
     vp.x = px - (px - vp.x) * ratio;
     vp.y = py - (py - vp.y) * ratio;
     vp.scale = newScale;
-    simRef.current?.reheat(0.1);
   }, []);
 
   const zoomBy = useCallback(
@@ -311,7 +310,6 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
         default:
           return;
       }
-      simRef.current?.reheat(0.08);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -339,7 +337,7 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
       const hit = hitTestNode(e.clientX, e.clientY);
       if (hit && simRef.current) {
         const { x, y } = screenToWorld(e.clientX, e.clientY);
-        simRef.current.pinNode(hit, x, y);
+        simRef.current.grabNode(hit, x, y);
         panRef.current = {
           mode: "node",
           pointerId: e.pointerId,
@@ -395,7 +393,7 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
 
       if (pan.mode === "node" && pan.node && simRef.current) {
         const { x, y } = screenToWorld(e.clientX, e.clientY);
-        simRef.current.pinNode(pan.node, x, y);
+        simRef.current.moveNode(pan.node, x, y);
       } else if (pan.mode === "pan") {
         viewportRef.current.x += dx;
         viewportRef.current.y += dy;
@@ -429,9 +427,6 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
     hoverRef.current = null;
   }, []);
 
-  const navOffset = isMobile
-    ? "calc(max(0.75rem, env(safe-area-inset-top)) + 3.5rem)"
-    : "calc(max(1rem, env(safe-area-inset-top)) + 3.25rem)";
   const controlSize = isMobile ? "h-11 w-11" : "h-8 w-8";
   const controlBottom = isMobile
     ? "max(5.5rem, calc(env(safe-area-inset-bottom) + 1rem))"
@@ -440,10 +435,10 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
   if (readCount === 0) {
     return (
       <div
-        className="flex h-full items-center justify-center px-6 pt-20"
-        style={{ background: OBSIDIAN_COLORS.background, color: OBSIDIAN_COLORS.controlsText }}
+        className="flex h-full items-center justify-center px-6 pt-24 pb-8"
+        style={{ background: theme.background, color: theme.controlsText }}
       >
-        <p className="text-center text-sm opacity-60">
+        <p className="max-w-xs text-center text-sm opacity-60">
           No finished reads yet — books marked as read on Goodreads will appear here.
         </p>
       </div>
@@ -451,20 +446,21 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden" style={{ background: OBSIDIAN_COLORS.background }}>
-      {/* Legend strip — Obsidian-style control bar under nav */}
+    <div
+      className="relative h-full w-full overflow-hidden pt-[calc(max(0.75rem,env(safe-area-inset-top))+4.5rem)] sm:pt-[calc(max(1rem,env(safe-area-inset-top))+3.75rem)]"
+      style={{ background: theme.background }}
+    >
       <div
-        className="pointer-events-none fixed left-1/2 z-[55] -translate-x-1/2 rounded-md border px-3 py-1.5 text-[11px]"
+        className="pointer-events-none absolute left-1/2 top-2 z-[55] max-w-[calc(100vw-1.5rem)] -translate-x-1/2 rounded-md border px-3 py-1.5 text-center text-[11px] sm:text-left"
         style={{
-          top: navOffset,
-          background: OBSIDIAN_COLORS.controlsBg,
-          borderColor: OBSIDIAN_COLORS.controlsBorder,
-          color: OBSIDIAN_COLORS.controlsText,
+          background: theme.controlsBg,
+          borderColor: theme.controlsBorder,
+          color: theme.controlsText,
         }}
       >
         <span className="opacity-80">
           {readCount} notes · {stats.links} links
-          {syncedAt && (
+          {syncedAt && !isMobile && (
             <>
               <span className="mx-2 opacity-30">|</span>
               <span className="opacity-50">
@@ -473,44 +469,105 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
             </>
           )}
         </span>
-        <span className="mx-2 opacity-30">|</span>
-        <span className="opacity-50">scroll / +/- zoom · drag to pan · drag nodes</span>
+        {!isMobile && (
+          <>
+            <span className="mx-2 opacity-30">|</span>
+            <span className="opacity-50">scroll / +/- zoom · drag to pan · drag nodes</span>
+          </>
+        )}
+        {isMobile && (
+          <p className="mt-0.5 text-[10px] leading-snug opacity-45">
+            Pinch to zoom · drag to pan · hold a node to move it
+          </p>
+        )}
       </div>
 
-      {/* Zoom controls — Obsidian bottom-right */}
       <div
         className="pointer-events-auto fixed z-[55] flex flex-col overflow-hidden rounded-md border shadow-lg"
         style={{
-          right: "max(1rem, env(safe-area-inset-right))",
+          right: "max(0.75rem, env(safe-area-inset-right))",
           bottom: controlBottom,
-          borderColor: OBSIDIAN_COLORS.controlsBorder,
-          background: OBSIDIAN_COLORS.controlsBg,
+          borderColor: theme.controlsBorder,
+          background: theme.controlsBg,
         }}
       >
         <button
           type="button"
           aria-label="Zoom in"
           onClick={() => zoomBy(1.15)}
-          className={`flex ${controlSize} items-center justify-center transition-colors hover:bg-white/5`}
-          style={{ color: OBSIDIAN_COLORS.controlsText }}
+          className={`flex ${controlSize} touch-manipulation items-center justify-center transition-colors`}
+          style={{ color: theme.controlsText }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = theme.controlHover;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+          }}
+          onMouseDown={(e) => {
+            e.currentTarget.style.background = theme.controlActive;
+          }}
+          onMouseUp={(e) => {
+            e.currentTarget.style.background = theme.controlHover;
+          }}
         >
-          <Plus size={16} />
+          <Plus size={isMobile ? 20 : 16} />
         </button>
-        <div className="h-px" style={{ background: OBSIDIAN_COLORS.controlsBorder }} />
+        <div className="h-px" style={{ background: theme.controlsBorder }} />
         <button
           type="button"
           aria-label="Zoom out"
           onClick={() => zoomBy(1 / 1.15)}
-          className={`flex ${controlSize} items-center justify-center transition-colors hover:bg-white/5`}
-          style={{ color: OBSIDIAN_COLORS.controlsText }}
+          className={`flex ${controlSize} touch-manipulation items-center justify-center transition-colors`}
+          style={{ color: theme.controlsText }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = theme.controlHover;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+          }}
+          onMouseDown={(e) => {
+            e.currentTarget.style.background = theme.controlActive;
+          }}
+          onMouseUp={(e) => {
+            e.currentTarget.style.background = theme.controlHover;
+          }}
         >
-          <Minus size={16} />
+          <Minus size={isMobile ? 20 : 16} />
         </button>
+        {isMobile && (
+          <>
+            <div className="h-px" style={{ background: theme.controlsBorder }} />
+            <button
+              type="button"
+              aria-label="Fit graph to screen"
+              onClick={() => {
+                fittedRef.current = false;
+                fitToView();
+              }}
+              className={`flex ${controlSize} touch-manipulation items-center justify-center transition-colors`}
+              style={{ color: theme.controlsText }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = theme.controlHover;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+              onMouseDown={(e) => {
+                e.currentTarget.style.background = theme.controlActive;
+              }}
+              onMouseUp={(e) => {
+                e.currentTarget.style.background = theme.controlHover;
+              }}
+            >
+              <Maximize2 size={18} />
+            </button>
+          </>
+        )}
       </div>
 
       <div
         ref={containerRef}
-        className="absolute inset-0 cursor-grab select-none"
+        className="absolute inset-0 cursor-grab touch-none select-none"
         style={{ touchAction: "none" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -523,7 +580,7 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
         {!ready && (
           <div
             className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm opacity-50"
-            style={{ color: OBSIDIAN_COLORS.controlsText }}
+            style={{ color: theme.controlsText }}
           >
             Loading graph…
           </div>

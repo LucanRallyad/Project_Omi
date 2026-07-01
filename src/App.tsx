@@ -379,9 +379,9 @@ export default function App() {
   const activeBook = queue[activeIndex];
   const exhausted = !loading && (queue.length === 0 || activeIndex >= queue.length);
   const { isMobile } = useViewport();
-  useShellTheme(isMobile, view === "reading-map");
+  useShellTheme(isMobile);
   const hideNav = isMobile && !!detailBook;
-  const shellDark = isMobile || view === "reading-map";
+  const shellDark = isMobile;
 
   return (
     <PasscodeGate>

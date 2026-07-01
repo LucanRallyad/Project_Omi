@@ -18,12 +18,14 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
+    "d3-force": "^3.0.0",
     "framer-motion": "^11.11.7",
     "lucide-react": "^0.451.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^26.0.1",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",

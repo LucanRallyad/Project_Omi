@@ -6,18 +6,17 @@ const THEME = {
 } as const;
 
 /** Sync html background + browser chrome color with the active shell (mobile = dark immersive). */
-export function useShellTheme(isMobile: boolean, obsidian = false): void {
+export function useShellTheme(isMobile: boolean): void {
   useEffect(() => {
-    const mode = obsidian || isMobile ? "dark" : "light";
+    const mode = isMobile ? "dark" : "light";
     document.documentElement.dataset.shell = mode;
 
     const meta = document.querySelector('meta[name="theme-color"]');
-    const color = obsidian ? "#1e1e1e" : THEME[mode];
-    meta?.setAttribute("content", color);
+    meta?.setAttribute("content", THEME[mode]);
 
     return () => {
       delete document.documentElement.dataset.shell;
       meta?.setAttribute("content", THEME.light);
     };
-  }, [isMobile, obsidian]);
+  }, [isMobile]);
 }
