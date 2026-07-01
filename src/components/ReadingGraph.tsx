@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Minus, Plus } from "lucide-react";
 import type { LibraryBook } from "../types";
 import { buildReadingGraph } from "../lib/bookGraph";
-import { runForceLayout, type SimNode } from "../lib/forceLayout";
+import { GraphSimulation, type SimNode } from "../lib/graphSimulation";
+import {
+  OBSIDIAN_COLORS,
+  OBSIDIAN_DISPLAY,
+  obsidianHitPadding,
+  obsidianLabelOpacity,
+  obsidianLinkWidth,
+  obsidianTextFadeForViewport,
+} from "../lib/obsidianGraphConfig";
+import { useViewport } from "../hooks/useViewport";
 
 interface ReadingGraphProps {
   books: LibraryBook[];
-  dark?: boolean;
+  syncedAt?: string | null;
 }
 
 interface Viewport {
@@ -14,52 +24,39 @@ interface Viewport {
   scale: number;
 }
 
-const MIN_SCALE = 0.15;
-const MAX_SCALE = 4;
-const LABEL_FADE_START = 0.55;
-const LABEL_FADE_END = 1.35;
-
-function linkColors(dark: boolean) {
-  return dark
-    ? {
-        series: "rgba(212, 132, 154, 0.6)",
-        author: "rgba(201, 169, 97, 0.45)",
-        tag: "rgba(183, 148, 244, 0.45)",
-      }
-    : {
-        series: "rgba(212, 132, 154, 0.7)",
-        author: "rgba(201, 169, 97, 0.55)",
-        tag: "rgba(183, 148, 244, 0.5)",
-      };
-}
+const MIN_SCALE = 0.05;
+const MAX_SCALE = 6;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
-function labelOpacity(scale: number): number {
-  return clamp((scale - LABEL_FADE_START) / (LABEL_FADE_END - LABEL_FADE_START), 0, 1);
-}
-
-export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
+export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
+  const { isMobile } = useViewport();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const layoutRef = useRef<{ nodes: SimNode[]; links: ReturnType<typeof buildReadingGraph>["links"] } | null>(
-    null
-  );
+  const simRef = useRef<GraphSimulation | null>(null);
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, scale: 1 });
+  const fittedRef = useRef(false);
+  const hoverRef = useRef<string | null>(null);
+
   const panRef = useRef<{
-    active: boolean;
+    mode: "idle" | "pan" | "node";
     pointerId: number | null;
     lastX: number;
     lastY: number;
-  }>({ active: false, pointerId: null, lastX: 0, lastY: 0 });
+    node: SimNode | null;
+  }>({ mode: "idle", pointerId: null, lastX: 0, lastY: 0, node: null });
+
   const pinchRef = useRef<{ active: boolean; dist: number; scale: number }>({
     active: false,
     dist: 0,
     scale: 1,
   });
-  const rafRef = useRef<number | null>(null);
+  const physicsFrameRef = useRef(0);
+
+  const textFade = obsidianTextFadeForViewport(isMobile);
+
   const [ready, setReady] = useState(false);
   const [stats, setStats] = useState({ nodes: 0, links: 0 });
 
@@ -68,10 +65,44 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     [books]
   );
 
+  const screenToWorld = useCallback((clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const { x: vx, y: vy, scale } = viewportRef.current;
+    const cx = rect.width / 2 + vx;
+    const cy = rect.height / 2 + vy;
+    return {
+      x: (clientX - rect.left - cx) / scale,
+      y: (clientY - rect.top - cy) / scale,
+    };
+  }, []);
+
+  const hitTestNode = useCallback(
+    (clientX: number, clientY: number): SimNode | null => {
+      const sim = simRef.current;
+      if (!sim) return null;
+      const { x: wx, y: wy } = screenToWorld(clientX, clientY);
+      const { scale } = viewportRef.current;
+      let best: SimNode | null = null;
+      let bestDist = Infinity;
+      for (const node of sim.nodes) {
+        const hitR = node.r + obsidianHitPadding(isMobile, scale);
+        const d = Math.hypot(node.x - wx, node.y - wy);
+        if (d <= hitR && d < bestDist) {
+          best = node;
+          bestDist = d;
+        }
+      }
+      return best;
+    },
+    [screenToWorld, isMobile]
+  );
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
-    const layout = layoutRef.current;
-    if (!canvas || !layout) return;
+    const sim = simRef.current;
+    if (!canvas || !sim) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -85,179 +116,305 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
+
+    // Obsidian workspace background.
+    ctx.fillStyle = OBSIDIAN_COLORS.background;
+    ctx.fillRect(0, 0, w, h);
 
     const { x: vx, y: vy, scale } = viewportRef.current;
     const cx = w / 2 + vx;
     const cy = h / 2 + vy;
-    const labels = labelOpacity(scale);
-    const links = linkColors(dark);
+    const hoverId = hoverRef.current;
+    const highlight = hoverId ? sim.neighborsOf(hoverId) : null;
+    const linkW = obsidianLinkWidth(isMobile);
 
-    const nodeById = new Map(layout.nodes.map((n) => [n.id, n]));
-    for (const link of layout.links) {
-      const a = nodeById.get(link.source);
-      const b = nodeById.get(link.target);
-      if (!a || !b) continue;
+    // Links — dim everything when hovering, highlight connected edges.
+    for (const { a, b } of sim.simLinks) {
+      const connected =
+        !highlight || (highlight.has(a.id) && highlight.has(b.id));
       ctx.beginPath();
       ctx.moveTo(cx + a.x * scale, cy + a.y * scale);
       ctx.lineTo(cx + b.x * scale, cy + b.y * scale);
-      ctx.strokeStyle = links[link.kind];
-      ctx.lineWidth = link.kind === "series" ? 1.5 : 1;
+      ctx.strokeStyle = connected ? OBSIDIAN_COLORS.lineHighlight : OBSIDIAN_COLORS.dimLine;
+      ctx.globalAlpha = connected ? (highlight ? 1 : 0.55) : 1;
+      ctx.lineWidth = connected && highlight ? linkW * 1.4 : linkW;
       ctx.stroke();
+      ctx.globalAlpha = 1;
     }
 
-    for (const node of layout.nodes) {
+    // Nodes.
+    for (const node of sim.nodes) {
       const sx = cx + node.x * scale;
       const sy = cy + node.y * scale;
-      const r = node.r * scale;
+      const screenR = node.r * scale * OBSIDIAN_DISPLAY.nodeSizeMultiplier;
+      const isHighlight = highlight?.has(node.id);
+      const isHovered = node.id === hoverId;
+      const dimmed = highlight && !isHighlight;
 
       ctx.beginPath();
-      ctx.arc(sx, sy, Math.max(r, 2.5), 0, Math.PI * 2);
-      ctx.fillStyle = node.color;
+      ctx.arc(sx, sy, Math.max(screenR, 2), 0, Math.PI * 2);
+      ctx.fillStyle = dimmed
+        ? OBSIDIAN_COLORS.dimNode
+        : isHovered || isHighlight
+          ? OBSIDIAN_COLORS.nodeHighlight
+          : node.color;
       ctx.fill();
 
-      ctx.strokeStyle = dark ? "rgba(255,255,255,0.18)" : "rgba(61, 43, 31, 0.2)";
-      ctx.lineWidth = 0.85;
+      ctx.strokeStyle = dimmed ? "transparent" : OBSIDIAN_COLORS.nodeCircle;
+      ctx.lineWidth = isHovered ? 1.2 : 0.75;
       ctx.stroke();
 
-      if (labels > 0.02 && r >= 3) {
-        const alpha = labels * clamp(r / 8, 0.35, 1);
-        ctx.font = `${Math.round(clamp(10 + r * 0.35, 10, 14))}px "DM Sans", system-ui, sans-serif`;
+      const labelAlpha = obsidianLabelOpacity(node.r, scale, textFade);
+      if (labelAlpha > 0.01) {
+        const alpha = dimmed ? labelAlpha * 0.12 : labelAlpha;
+        const fontSize = isMobile
+          ? Math.round(clamp(10 + screenR * 0.12, 10, 13))
+          : Math.round(clamp(11 + screenR * 0.15, 11, 14));
+        ctx.font = `400 ${fontSize}px "Inter", "Segoe UI", system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillStyle = dark
-          ? `rgba(255, 248, 242, ${alpha * 0.92})`
-          : `rgba(61, 43, 31, ${alpha * 0.88})`;
-        const label = node.title.length > 28 ? `${node.title.slice(0, 26)}…` : node.title;
-        ctx.fillText(label, sx, sy + r + 3);
+        ctx.fillStyle = dimmed ? OBSIDIAN_COLORS.dimText : OBSIDIAN_COLORS.text;
+        ctx.globalAlpha = alpha;
+        const maxLen = isMobile ? 28 : 36;
+        const label =
+          node.title.length > maxLen ? `${node.title.slice(0, maxLen - 1)}…` : node.title;
+        ctx.fillText(label, sx, sy + Math.max(screenR, 2) + (isMobile ? 3 : 4));
+        ctx.globalAlpha = 1;
       }
     }
-  }, [dark]);
+  }, [isMobile, textFade]);
 
-  const scheduleDraw = useCallback(() => {
-    if (rafRef.current != null) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
+  useEffect(() => {
+    let running = true;
+    const frame = () => {
+      if (!running) return;
+      physicsFrameRef.current += 1;
+      const sim = simRef.current;
+      if (sim) {
+        const shouldTick = !isMobile || physicsFrameRef.current % 2 === 0 || sim.alpha > 0.08;
+        if (shouldTick) sim.tick();
+      }
       draw();
-    });
-  }, [draw]);
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+    return () => {
+      running = false;
+    };
+  }, [draw, isMobile]);
 
   useEffect(() => {
+    fittedRef.current = false;
     setReady(false);
-    const id = requestAnimationFrame(() => {
-      const graph = buildReadingGraph(books);
-      layoutRef.current = runForceLayout(graph.nodes, graph.links);
-      setStats({ nodes: graph.nodes.length, links: graph.links.length });
-      setReady(true);
-      scheduleDraw();
-    });
-    return () => cancelAnimationFrame(id);
-  }, [books, scheduleDraw]);
+    const graph = buildReadingGraph(books);
+    simRef.current = new GraphSimulation(graph.nodes, graph.links);
+    setStats({ nodes: graph.nodes.length, links: graph.links.length });
+    setReady(true);
+  }, [books]);
 
-  useEffect(() => {
-    if (!ready || !layoutRef.current || !containerRef.current) return;
-    const layout = layoutRef.current;
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const n of layout.nodes) {
-      minX = Math.min(minX, n.x - n.r);
-      maxX = Math.max(maxX, n.x + n.r);
-      minY = Math.min(minY, n.y - n.r);
-      maxY = Math.max(maxY, n.y + n.r);
-    }
+  const fitToView = useCallback(() => {
+    const sim = simRef.current;
+    const container = containerRef.current;
+    if (!sim || !container) return;
+    const { minX, maxX, minY, maxY } = sim.bounds();
     const gw = maxX - minX || 1;
     const gh = maxY - minY || 1;
-    const rect = containerRef.current.getBoundingClientRect();
-    const pad = 32;
+    const rect = container.getBoundingClientRect();
+    const pad = isMobile ? 28 : 60;
     const scale = clamp(
       Math.min((rect.width - pad * 2) / gw, (rect.height - pad * 2) / gh),
       MIN_SCALE,
-      1.2
+      isMobile ? 1.2 : 1
     );
     viewportRef.current = { x: 0, y: 0, scale };
-    scheduleDraw();
-  }, [ready, scheduleDraw]);
+    fittedRef.current = true;
+  }, [isMobile]);
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => scheduleDraw());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [scheduleDraw]);
+    if (!ready || fittedRef.current) return;
+    requestAnimationFrame(() => fitToView());
+  }, [ready, fitToView]);
 
-  const zoomAt = useCallback(
-    (clientX: number, clientY: number, factor: number) => {
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const ro = new ResizeObserver(() => {
+      if (!fittedRef.current) fitToView();
+      draw();
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [draw, fitToView]);
+
+  const zoomAt = useCallback((clientX: number, clientY: number, factor: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = clientX - rect.left - rect.width / 2;
+    const py = clientY - rect.top - rect.height / 2;
+    const vp = viewportRef.current;
+    const newScale = clamp(vp.scale * factor, MIN_SCALE, MAX_SCALE);
+    const ratio = newScale / vp.scale;
+    vp.x = px - (px - vp.x) * ratio;
+    vp.y = py - (py - vp.y) * ratio;
+    vp.scale = newScale;
+    simRef.current?.reheat(0.1);
+  }, []);
+
+  const zoomBy = useCallback(
+    (factor: number) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      const px = clientX - rect.left - rect.width / 2;
-      const py = clientY - rect.top - rect.height / 2;
-      const vp = viewportRef.current;
-      const newScale = clamp(vp.scale * factor, MIN_SCALE, MAX_SCALE);
-      const ratio = newScale / vp.scale;
-      vp.x = px - (px - vp.x) * ratio;
-      vp.y = py - (py - vp.y) * ratio;
-      vp.scale = newScale;
-      scheduleDraw();
+      zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
     },
-    [scheduleDraw]
+    [zoomAt]
   );
 
-  const panBy = useCallback(
-    (dx: number, dy: number) => {
-      viewportRef.current.x += dx;
-      viewportRef.current.y += dy;
-      scheduleDraw();
-    },
-    [scheduleDraw]
-  );
-
-  // Native wheel listener — React's onWheel can't always preventDefault (passive).
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      zoomAt(e.clientX, e.clientY, factor);
+      zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.08 : 1 / 1.08);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoomAt]);
 
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    panRef.current = {
-      active: true,
-      pointerId: e.pointerId,
-      lastX: e.clientX,
-      lastY: e.clientY,
+  // Obsidian arrow-key pan (+/- zoom).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const step = e.shiftKey ? 48 : 16;
+      const vp = viewportRef.current;
+      switch (e.key) {
+        case "ArrowLeft":
+          vp.x += step;
+          break;
+        case "ArrowRight":
+          vp.x -= step;
+          break;
+        case "ArrowUp":
+          vp.y += step;
+          break;
+        case "ArrowDown":
+          vp.y -= step;
+          break;
+        case "+":
+        case "=":
+          zoomBy(1.12);
+          return;
+        case "-":
+          zoomBy(1 / 1.12);
+          return;
+        default:
+          return;
+      }
+      simRef.current?.reheat(0.08);
     };
-    containerRef.current?.setPointerCapture(e.pointerId);
-    if (containerRef.current) containerRef.current.style.cursor = "grabbing";
-  }, []);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomBy]);
+
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (pointersRef.current.size === 2) {
+        panRef.current = { mode: "idle", pointerId: null, lastX: 0, lastY: 0, node: null };
+        const pts = [...pointersRef.current.values()];
+        pinchRef.current = {
+          active: true,
+          dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+          scale: viewportRef.current.scale,
+        };
+        containerRef.current?.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      const hit = hitTestNode(e.clientX, e.clientY);
+      if (hit && simRef.current) {
+        const { x, y } = screenToWorld(e.clientX, e.clientY);
+        simRef.current.pinNode(hit, x, y);
+        panRef.current = {
+          mode: "node",
+          pointerId: e.pointerId,
+          lastX: e.clientX,
+          lastY: e.clientY,
+          node: hit,
+        };
+      } else {
+        panRef.current = {
+          mode: "pan",
+          pointerId: e.pointerId,
+          lastX: e.clientX,
+          lastY: e.clientY,
+          node: null,
+        };
+      }
+      containerRef.current?.setPointerCapture(e.pointerId);
+      if (containerRef.current) containerRef.current.style.cursor = "grabbing";
+    },
+    [hitTestNode, screenToWorld]
+  );
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
+      if (pointersRef.current.has(e.pointerId)) {
+        pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+
+      if (pinchRef.current.active && pointersRef.current.size >= 2) {
+        const pts = [...pointersRef.current.values()];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        const midX = (pts[0].x + pts[1].x) / 2;
+        const midY = (pts[0].y + pts[1].y) / 2;
+        const target = clamp(
+          pinchRef.current.scale * (dist / pinchRef.current.dist),
+          MIN_SCALE,
+          MAX_SCALE
+        );
+        zoomAt(midX, midY, target / viewportRef.current.scale);
+        return;
+      }
+
+      const hit = hitTestNode(e.clientX, e.clientY);
+      hoverRef.current = hit?.id ?? null;
+
       const pan = panRef.current;
-      if (!pan.active || pan.pointerId !== e.pointerId) return;
+      if (pan.mode === "idle" || pan.pointerId !== e.pointerId) return;
+
       const dx = e.clientX - pan.lastX;
       const dy = e.clientY - pan.lastY;
       pan.lastX = e.clientX;
       pan.lastY = e.clientY;
-      panBy(dx, dy);
+
+      if (pan.mode === "node" && pan.node && simRef.current) {
+        const { x, y } = screenToWorld(e.clientX, e.clientY);
+        simRef.current.pinNode(pan.node, x, y);
+      } else if (pan.mode === "pan") {
+        viewportRef.current.x += dx;
+        viewportRef.current.y += dy;
+      }
     },
-    [panBy]
+    [hitTestNode, screenToWorld, zoomAt]
   );
 
   const endPan = useCallback((e: React.PointerEvent) => {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current.active = false;
+
     const pan = panRef.current;
-    if (pan.pointerId !== e.pointerId) return;
-    pan.active = false;
-    pan.pointerId = null;
+    if (pan.pointerId === e.pointerId && pan.mode === "node" && pan.node && simRef.current) {
+      simRef.current.unpinNode(pan.node);
+    }
+    if (pan.pointerId === e.pointerId) {
+      panRef.current = { mode: "idle", pointerId: null, lastX: 0, lastY: 0, node: null };
+    }
     if (containerRef.current) {
       containerRef.current.style.cursor = "grab";
       try {
@@ -268,60 +425,25 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     }
   }, []);
 
-  const onTouchStart = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length === 1) {
-      const t = e.touches[0];
-      panRef.current = {
-        active: true,
-        pointerId: null,
-        lastX: t.clientX,
-        lastY: t.clientY,
-      };
-    } else if (e.touches.length === 2) {
-      panRef.current.active = false;
-      const [a, b] = [e.touches[0], e.touches[1]];
-      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      pinchRef.current = { active: true, dist, scale: viewportRef.current.scale };
-    }
+  const onPointerLeave = useCallback(() => {
+    hoverRef.current = null;
   }, []);
 
-  const onTouchMove = useCallback(
-    (e: React.TouchEvent) => {
-      if (e.touches.length === 1 && panRef.current.active && !pinchRef.current.active) {
-        e.preventDefault();
-        const t = e.touches[0];
-        const dx = t.clientX - panRef.current.lastX;
-        const dy = t.clientY - panRef.current.lastY;
-        panRef.current.lastX = t.clientX;
-        panRef.current.lastY = t.clientY;
-        panBy(dx, dy);
-        return;
-      }
-      if (e.touches.length !== 2 || !pinchRef.current.active) return;
-      e.preventDefault();
-      const [a, b] = [e.touches[0], e.touches[1]];
-      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      const midX = (a.clientX + b.clientX) / 2;
-      const midY = (a.clientY + b.clientY) / 2;
-      const factor = dist / pinchRef.current.dist;
-      const target = clamp(pinchRef.current.scale * factor, MIN_SCALE, MAX_SCALE);
-      const current = viewportRef.current.scale;
-      if (Math.abs(target - current) > 0.001) {
-        zoomAt(midX, midY, target / current);
-      }
-    },
-    [panBy, zoomAt]
-  );
-
-  const onTouchEnd = useCallback(() => {
-    panRef.current.active = false;
-    pinchRef.current.active = false;
-  }, []);
+  const navOffset = isMobile
+    ? "calc(max(0.75rem, env(safe-area-inset-top)) + 3.5rem)"
+    : "calc(max(1rem, env(safe-area-inset-top)) + 3.25rem)";
+  const controlSize = isMobile ? "h-11 w-11" : "h-8 w-8";
+  const controlBottom = isMobile
+    ? "max(5.5rem, calc(env(safe-area-inset-bottom) + 1rem))"
+    : "max(1rem, env(safe-area-inset-bottom))";
 
   if (readCount === 0) {
     return (
-      <div className="flex h-full items-center justify-center px-6 pt-20">
-        <p className={`text-center text-sm ${dark ? "text-white/50" : "text-espresso/50"}`}>
+      <div
+        className="flex h-full items-center justify-center px-6 pt-20"
+        style={{ background: OBSIDIAN_COLORS.background, color: OBSIDIAN_COLORS.controlsText }}
+      >
+        <p className="text-center text-sm opacity-60">
           No finished reads yet — books marked as read on Goodreads will appear here.
         </p>
       </div>
@@ -329,34 +451,61 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
-      {/* Legend — sits directly under the nav pill, pointer-events-none so pan works through it */}
+    <div className="relative h-full w-full overflow-hidden" style={{ background: OBSIDIAN_COLORS.background }}>
+      {/* Legend strip — Obsidian-style control bar under nav */}
       <div
-        className="pointer-events-none fixed left-1/2 z-[55] -translate-x-1/2"
-        style={{ top: "calc(max(1rem, env(safe-area-inset-top)) + 3.25rem)" }}
+        className="pointer-events-none fixed left-1/2 z-[55] -translate-x-1/2 rounded-md border px-3 py-1.5 text-[11px]"
+        style={{
+          top: "calc(max(1rem, env(safe-area-inset-top)) + 3.25rem)",
+          background: OBSIDIAN_COLORS.controlsBg,
+          borderColor: OBSIDIAN_COLORS.controlsBorder,
+          color: OBSIDIAN_COLORS.controlsText,
+        }}
       >
-        <div
-          className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-full px-3.5 py-1.5 text-[11px] shadow-soft ${
-            dark ? "glass-dark text-white/50" : "glass text-espresso/55"
-          }`}
+        <span className="opacity-80">
+          {readCount} notes · {stats.links} links
+          {syncedAt && (
+            <>
+              <span className="mx-2 opacity-30">|</span>
+              <span className="opacity-50">
+                synced {new Date(syncedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              </span>
+            </>
+          )}
+        </span>
+        <span className="mx-2 opacity-30">|</span>
+        <span className="opacity-50">scroll / +/- zoom · drag to pan · drag nodes</span>
+      </div>
+
+      {/* Zoom controls — Obsidian bottom-right */}
+      <div
+        className="pointer-events-auto fixed z-[55] flex flex-col overflow-hidden rounded-md border shadow-lg"
+        style={{
+          right: "max(1rem, env(safe-area-inset-right))",
+          bottom: "max(1rem, env(safe-area-inset-bottom))",
+          borderColor: OBSIDIAN_COLORS.controlsBorder,
+          background: OBSIDIAN_COLORS.controlsBg,
+        }}
+      >
+        <button
+          type="button"
+          aria-label="Zoom in"
+          onClick={() => zoomBy(1.15)}
+          className="flex h-8 w-8 items-center justify-center transition-colors hover:bg-white/5"
+          style={{ color: OBSIDIAN_COLORS.controlsText }}
         >
-          <span className={dark ? "text-white/65" : "text-espresso/70"}>
-            {readCount} books · {stats.links} links
-          </span>
-          <span className={`hidden h-3 w-px sm:block ${dark ? "bg-white/15" : "bg-espresso/15"}`} />
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-0.5 w-3.5 rounded-full bg-rose/70" />
-            series
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-0.5 w-3.5 rounded-full bg-gold/60" />
-            author
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-0.5 w-3.5 rounded-full bg-[#B794F4]/60" />
-            tag
-          </span>
-        </div>
+          <Plus size={16} />
+        </button>
+        <div className="h-px" style={{ background: OBSIDIAN_COLORS.controlsBorder }} />
+        <button
+          type="button"
+          aria-label="Zoom out"
+          onClick={() => zoomBy(1 / 1.15)}
+          className="flex h-8 w-8 items-center justify-center transition-colors hover:bg-white/5"
+          style={{ color: OBSIDIAN_COLORS.controlsText }}
+        >
+          <Minus size={16} />
+        </button>
       </div>
 
       <div
@@ -367,6 +516,7 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
         onPointerMove={onPointerMove}
         onPointerUp={endPan}
         onPointerCancel={endPan}
+        onPointerLeave={onPointerLeave}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -375,10 +525,11 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
         <canvas ref={canvasRef} className="pointer-events-none h-full w-full" />
 
         {!ready && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <p className={`text-sm ${dark ? "text-white/50" : "text-espresso/50"}`}>
-              Mapping your library…
-            </p>
+          <div
+            className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm opacity-50"
+            style={{ color: OBSIDIAN_COLORS.controlsText }}
+          >
+            Loading graph…
           </div>
         )}
       </div>

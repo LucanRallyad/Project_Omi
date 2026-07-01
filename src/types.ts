@@ -36,6 +36,8 @@ export interface LibraryBook {
   description?: string | null;
   /** Goodreads work/edition id for deduping sync rows. */
   goodreadsBookId?: string | null;
+  /** ISO timestamp from the last Goodreads RSS sync (Supabase rows only). */
+  syncedAt?: string | null;
 }
 
 /** A candidate book to recommend (may originate from the library or an API). */

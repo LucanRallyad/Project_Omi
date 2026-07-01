@@ -17,28 +17,46 @@ export function getLibrary(): LibraryBook[] {
 export function setLibrary(books: LibraryBook[]): void {
   library = books;
   initialized = true;
+  indexLibraryDescriptions(library);
 }
 
-/** Load the latest library from Supabase (falls back to baked JSON). */
-export async function initLibrary(): Promise<LibraryBook[]> {
-  if (initialized) return library;
+/** Pull the latest library rows from Supabase (no-op when offline / unconfigured). */
+export async function loadLibraryFromSupabase(): Promise<LibraryBook[]> {
+  if (!isSupabaseConfigured || !supabase) return library;
 
-  initialized = true;
+  const { data, error } = await supabase
+    .from("library_books")
+    .select("*")
+    .eq("profile_id", PROFILE_ID);
 
-  if (isSupabaseConfigured && supabase) {
-    void supabase
-      .from("library_books")
-      .select("*")
-      .eq("profile_id", PROFILE_ID)
-      .then(({ data, error }) => {
-        if (!error && data?.length) {
-          library = (data as LibraryBookRow[]).map(rowToBook);
-          indexLibraryDescriptions(library);
-        }
-      });
+  if (!error && data?.length) {
+    library = (data as LibraryBookRow[]).map(rowToBook);
+    indexLibraryDescriptions(library);
   }
 
   return library;
+}
+
+/** Load library once at app start (Supabase when available, else baked JSON). */
+export async function initLibrary(): Promise<LibraryBook[]> {
+  if (initialized) return library;
+  await loadLibraryFromSupabase();
+  initialized = true;
+  return library;
+}
+
+/** Re-fetch library from Supabase — used after weekly Goodreads sync / opening the reading map. */
+export async function refreshLibrary(): Promise<LibraryBook[]> {
+  return loadLibraryFromSupabase();
+}
+
+/** Most recent Goodreads sync timestamp from library rows, if any. */
+export function librarySyncedAt(): string | null {
+  let latest: string | null = null;
+  for (const book of library) {
+    if (book.syncedAt && (!latest || book.syncedAt > latest)) latest = book.syncedAt;
+  }
+  return latest;
 }
 
 export function resetLibraryForTests(): void {

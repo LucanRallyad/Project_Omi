@@ -70,5 +70,6 @@ export function rowToBook(row: LibraryBookRow): LibraryBook {
     coverUrl: row.cover_url,
     description: row.description,
     goodreadsBookId: row.goodreads_book_id,
+    syncedAt: row.synced_at,
   };
 }

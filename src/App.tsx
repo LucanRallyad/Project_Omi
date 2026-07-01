@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Bookmark, Heart, BookMarked, Sparkles } from "lucide-react";
-import type { Book, SavedBook, ShelfView, SwipeDirection, TasteWeight } from "./types";
+import type { Book, LibraryBook, SavedBook, ShelfView, SwipeDirection, TasteWeight } from "./types";
 import {
   generateCandidates,
   learnFromSwipe,
@@ -34,7 +34,7 @@ import { EmptyState } from "./components/EmptyState";
 import { UndoToast } from "./components/UndoToast";
 import { PasscodeGate } from "./components/PasscodeGate";
 import type { SwipeAction } from "./components/SwipeCard";
-import { initLibrary, getLibrary } from "./lib/libraryStore";
+import { initLibrary, getLibrary, refreshLibrary, librarySyncedAt } from "./lib/libraryStore";
 import { useViewport } from "./hooks/useViewport";
 
 const BookDetail = lazy(() =>
@@ -87,6 +87,7 @@ export default function App() {
   const [likedKeys, setLikedKeys] = useState<string[]>([]);
   const [detailBook, setDetailBook] = useState<Book | null>(null);
   const [undo, setUndo] = useState<UndoState | null>(null);
+  const [libraryBooks, setLibraryBooks] = useState<LibraryBook[]>(() => getLibrary());
 
   const profileRef = useRef<TasteProfile | null>(null);
   const weightsRef = useRef<TasteWeight[]>([]);
@@ -151,11 +152,24 @@ export default function App() {
     await Promise.all(workers);
   }, []);
 
+  // Pull the latest Goodreads library when opening the reading map (weekly cron keeps Supabase fresh).
+  useEffect(() => {
+    if (view !== "reading-map") return;
+    let cancelled = false;
+    void refreshLibrary().then((books) => {
+      if (!cancelled) setLibraryBooks(books);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [view]);
+
   // Initial load: profile, weights, saved, swipes, first candidate batch.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       await Promise.all([initLibrary(), warmMetaCache()]);
+      setLibraryBooks(getLibrary());
 
       const [swipes, savedList, learned] = await Promise.all([
         loadSwipes(),
@@ -362,9 +376,9 @@ export default function App() {
   const activeBook = queue[activeIndex];
   const exhausted = !loading && (queue.length === 0 || activeIndex >= queue.length);
   const { isMobile } = useViewport();
-  useShellTheme(isMobile);
+  useShellTheme(isMobile, view === "reading-map");
   const hideNav = isMobile && !!detailBook;
-  const shellDark = isMobile;
+  const shellDark = isMobile || view === "reading-map";
 
   return (
     <PasscodeGate>
@@ -480,7 +494,7 @@ export default function App() {
                 ))}
 
               {view === "reading-map" && (
-                <ReadingGraph books={getLibrary()} dark={shellDark} />
+                <ReadingGraph books={libraryBooks} syncedAt={librarySyncedAt()} />
               )}
             </main>
           </>

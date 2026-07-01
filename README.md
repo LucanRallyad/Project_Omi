@@ -115,10 +115,41 @@ launches full-screen with the custom icon, no browser chrome.
 
 ## Updating her library later
 
-If you re-export her Goodreads library, replace `Romi_Goodreads_Library.md` and run:
+### Automatic (recommended)
+
+Every **Sunday at 8:00 UTC**, Vercel Cron calls `/api/cron/sync-goodreads`, which:
+
+1. Pulls Romi's full Goodreads library via RSS (read, want-to-read, currently reading, DNF, and tag shelves).
+2. Upserts rows into Supabase `library_books`.
+3. Refreshes taste weights and pass-swipes for finished books.
+4. Updates the **Reading Map** (Obsidian-style graph) — new reads appear as nodes automatically.
+
+Required Vercel env vars (see [`.env.example`](.env.example)):
+
+```bash
+GOODREADS_USER_ID=71171257
+CRON_SECRET=your-random-secret   # Vercel sends Authorization: Bearer <CRON_SECRET>
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
+```
+
+The cron schedule lives in [`vercel.json`](vercel.json). Opening the **Map** tab always re-fetches the latest library from Supabase.
+
+### Manual sync
+
+Run locally anytime (updates `library.json` + Supabase):
+
+```bash
+npm run sync-goodreads
+```
+
+### Legacy markdown export
+
+If you still maintain `Romi_Goodreads_Library.md`, replace it and run:
 
 ```bash
 npm run parse-library
+npm run seed-library
 ```
 
 ## How the recommender works
