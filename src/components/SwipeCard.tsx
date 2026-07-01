@@ -36,7 +36,7 @@ const EXIT_SPRING = { type: "spring" as const, stiffness: 220, damping: 28, mass
 const SNAP_SPRING = { type: "spring" as const, stiffness: 420, damping: 34, mass: 0.75 };
 
 /**
- * Center card gestures: horizontal = like/pass, vertical up = skip.
+ * Center card gestures: horizontal = like/pass; vertical up = skip (mobile only).
  * The card tracks your finger during drag, then flings off or snaps back.
  */
 export const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function SwipeCard(
@@ -118,9 +118,9 @@ export const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function Sw
     if (horizontal && offset.x > H_THRESHOLD) return flingOff("like");
     if (horizontal && offset.x < -H_THRESHOLD) return flingOff("pass");
 
-    if (!horizontal && offset.y < -V_THRESHOLD) return flingOff("skip");
+    if (isMobile && !horizontal && offset.y < -V_THRESHOLD) return flingOff("skip");
     // Flick up with velocity even if distance is short
-    if (!horizontal && velocity.y < -650) return flingOff("skip");
+    if (isMobile && !horizontal && velocity.y < -650) return flingOff("skip");
 
     animate(x, 0, SNAP_SPRING);
     animate(y, 0, SNAP_SPRING);
@@ -130,7 +130,7 @@ export const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function Sw
     <motion.div
       className="relative h-full w-full cursor-grab active:cursor-grabbing"
       style={{ x, y, rotateZ, touchAction: "none" }}
-      drag={!reducedMotion && !exiting}
+      drag={!reducedMotion && !exiting ? (isMobile ? true : "x") : false}
       dragSnapToOrigin={false}
       dragElastic={0.12}
       dragMomentum={false}

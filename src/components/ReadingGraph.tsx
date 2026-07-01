@@ -428,6 +428,8 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
   }, []);
 
   const controlSize = isMobile ? "h-11 w-11" : "h-8 w-8";
+  /** Matches NavBar top + pill height + gap so the legend clears the fixed nav. */
+  const legendTop = "calc(max(1rem, env(safe-area-inset-top)) + 3.5rem)";
   const controlBottom = isMobile
     ? "max(5.5rem, calc(env(safe-area-inset-bottom) + 1rem))"
     : "max(1rem, env(safe-area-inset-bottom))";
@@ -447,12 +449,13 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
 
   return (
     <div
-      className="relative h-full w-full overflow-hidden pt-[calc(max(0.75rem,env(safe-area-inset-top))+4.5rem)] sm:pt-[calc(max(1rem,env(safe-area-inset-top))+3.75rem)]"
+      className="relative h-full w-full overflow-hidden"
       style={{ background: theme.background }}
     >
       <div
-        className="pointer-events-none absolute left-1/2 top-2 z-[55] max-w-[calc(100vw-1.5rem)] -translate-x-1/2 rounded-md border px-3 py-1.5 text-center text-[11px] sm:text-left"
+        className="pointer-events-none fixed left-1/2 z-[55] max-w-[calc(100vw-1.5rem)] -translate-x-1/2 rounded-md border px-3 py-1.5 text-center text-[11px] sm:text-left"
         style={{
+          top: legendTop,
           background: theme.controlsBg,
           borderColor: theme.controlsBorder,
           color: theme.controlsText,

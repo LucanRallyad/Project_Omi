@@ -95,9 +95,11 @@ export function BookDetail({
             <DetailAction label="Pass" tone="pass" onClick={() => act("pass")}>
               <X size={22} strokeWidth={2.6} />
             </DetailAction>
-            <DetailAction label="Skip" tone="skip" onClick={() => act("skip")}>
-              <ChevronUp size={20} strokeWidth={2.6} />
-            </DetailAction>
+            {isMobile && (
+              <DetailAction label="Skip" tone="skip" onClick={() => act("skip")}>
+                <ChevronUp size={20} strokeWidth={2.6} />
+              </DetailAction>
+            )}
             <DetailAction label="Love" tone="like" onClick={() => act("like")}>
               <Check size={22} strokeWidth={2.6} />
             </DetailAction>

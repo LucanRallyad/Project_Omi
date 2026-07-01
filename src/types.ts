@@ -91,3 +91,10 @@ export interface TasteWeight {
 }
 
 export type ShelfView = "discover" | "saved" | "liked" | "want-to-read" | "reading-map";
+
+/** Persisted discover carousel state so browsing resumes across sessions. */
+export interface DiscoverSession {
+  queue: Book[];
+  active_index: number;
+  updated_at: string;
+}

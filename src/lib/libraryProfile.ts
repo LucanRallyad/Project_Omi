@@ -14,6 +14,13 @@ const TAG_TO_SUBJECT: Record<string, string> = {
   favorites: "Fiction",
 };
 
+/** Series-name hints for genre inference when shelf tags are missing. */
+const SERIES_GENRE_HINTS: { pattern: RegExp; genres: string[] }[] = [
+  { pattern: /court of thorns|acotar|throne of glass|fourth wing|empyrean/i, genres: ["Fantasy", "Romance"] },
+  { pattern: /naturals|thriller|murder|killer|detective/i, genres: ["Thriller", "Young Adult"] },
+  { pattern: /hunger games|divergent|maze runner/i, genres: ["Young Adult", "Fiction"] },
+];
+
 export interface TasteProfile {
   authorWeights: Map<string, number>;
   genreWeights: Map<string, number>;
@@ -106,25 +113,50 @@ export function wantToReadLibraryBooks(): LibraryBook[] {
 /** Rating (1-5) -> contribution centered around a neutral 3-star read. */
 function ratingWeight(rating: number | null): number {
   if (rating == null) return 0.5;
+  if (rating <= 2) return rating - 3.5;
   return rating - 3;
+}
+
+/** Library JSON is newest-first; recent reads count slightly more. */
+function recencyMultiplier(index: number): number {
+  if (index < 25) return 1.25;
+  if (index < 70) return 1.1;
+  return 1;
+}
+
+function inferGenresFromBook(book: LibraryBook): string[] {
+  const inferred = new Set<string>();
+  const haystack = `${book.title} ${book.series ?? ""}`;
+  for (const { pattern, genres } of SERIES_GENRE_HINTS) {
+    if (pattern.test(haystack)) genres.forEach((g) => inferred.add(g));
+  }
+  if (book.series && (book.rating ?? 0) >= 4) inferred.add("Romance");
+  return [...inferred];
 }
 
 export function buildTasteProfile(): TasteProfile {
   const authorWeights = new Map<string, number>();
   const genreWeights = new Map<string, number>();
 
-  for (const book of getLibrary()) {
+  for (const [index, book] of getLibrary().entries()) {
     let weight: number;
-    if (book.status === "did-not-finish") weight = -1.5;
-    else if (book.status === "want-to-read") weight = 0.75;
+    if (book.status === "did-not-finish") weight = -2;
+    else if (book.status === "want-to-read") weight = 0.85;
     else weight = ratingWeight(book.rating);
+
+    weight *= recencyMultiplier(index);
+    if (book.status === "read" && book.rating === 5) weight *= 1.15;
 
     authorWeights.set(book.author, (authorWeights.get(book.author) ?? 0) + weight);
 
     for (const tag of book.tags) {
       const subject = TAG_TO_SUBJECT[tag] ?? tag;
-      const tagBoost = tag === "favorites" ? weight + 1 : weight;
+      const tagBoost = tag === "favorites" ? weight + 1.25 : weight;
       genreWeights.set(subject, (genreWeights.get(subject) ?? 0) + tagBoost);
+    }
+
+    for (const genre of inferGenresFromBook(book)) {
+      genreWeights.set(genre, (genreWeights.get(genre) ?? 0) + weight * 0.6);
     }
   }
 
@@ -178,12 +210,11 @@ export function profileFromWeights(weights: TasteWeight[]): TasteProfile {
   return { authorWeights, genreWeights, topAuthors, topGenres };
 }
 
-export function resolveTasteProfile(learned: TasteWeight[]): TasteProfile {
+/** Merge swipe-learned deltas onto the live Goodreads library baseline. */
+export function resolveTasteProfile(swipeDeltas: TasteWeight[]): TasteProfile {
   const libraryBaseline = buildTasteProfile();
-  if (!learned.length) return libraryBaseline;
-  // Full library seed is ~198 weights; smaller sets are swipe-only deltas.
-  if (learned.length < 50) return applyLearnedWeights(libraryBaseline, learned);
-  return profileFromWeights(learned);
+  if (!swipeDeltas.length) return libraryBaseline;
+  return applyLearnedWeights(libraryBaseline, swipeDeltas);
 }
 
 /** Merge swipe-learned deltas onto a library baseline profile. */

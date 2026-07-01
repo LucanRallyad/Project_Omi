@@ -14,17 +14,21 @@ import { fetchCoverUrl, prefetchDiscoverMeta, prefetchMeta } from "./lib/bookApi
 import { warmMetaCache } from "./lib/cache";
 import { allLibraryCoverEntries, warmCoverIndex } from "./lib/libraryCovers";
 import {
+  loadDiscoverSession,
   loadRegistry,
   loadSaved,
   loadSwipes,
-  loadWeights,
+  loadSwipeWeights,
   recordSwipe,
+  reconcileDiscoverSession,
   registerBook,
   removeSwipe,
   saveBook,
-  saveWeights,
+  saveDiscoverSession,
+  saveSwipeWeights,
   unsaveBook,
 } from "./lib/store";
+import { mergeWeights } from "./lib/tasteWeights";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { NavBar } from "./components/NavBar";
 import { CoverflowCarousel } from "./components/CoverflowCarousel";
@@ -174,28 +178,41 @@ export default function App() {
       await Promise.all([initLibrary(), warmMetaCache(), warmCoverIndex()]);
       setLibraryBooks(getLibrary());
 
-      const [swipes, savedList, learned] = await Promise.all([
+      const [swipes, savedList, swipeDeltas] = await Promise.all([
         loadSwipes(),
         loadSaved(),
-        loadWeights(),
+        loadSwipeWeights(),
       ]);
       if (cancelled) return;
 
       setSaved(savedList);
       setLikedKeys(swipes.filter((s) => s.direction === "like").map((s) => s.book_key));
-      weightsRef.current = learned;
+      weightsRef.current = swipeDeltas;
 
-      const profile = resolveTasteProfile(learned);
+      const profile = resolveTasteProfile(swipeDeltas);
       profileRef.current = profile;
 
       const exclude = new Set<string>(buildLibraryExclusionSet());
       for (const s of swipes) exclude.add(s.book_key);
       excludeRef.current = exclude;
 
-      const first = await generateCandidates(profile, exclude, 30);
+      const session = await loadDiscoverSession();
+      const restored = session ? reconcileDiscoverSession(session, exclude) : null;
+
+      let first: Book[];
+      let startIndex: number;
+      if (restored?.queue.length) {
+        first = restored.queue;
+        startIndex = restored.activeIndex;
+        for (const book of first) registerBook(book, book.seedCoverUrl ?? null, book.categories);
+      } else {
+        first = await generateCandidates(profile, exclude, 30);
+        startIndex = 0;
+      }
       if (cancelled) return;
 
       setQueue(first);
+      setActiveIndex(startIndex);
       setLoading(false);
 
       // Hydrate baked + cached shelf covers immediately.
@@ -219,8 +236,8 @@ export default function App() {
         }
       }
 
-      void ensureCovers(first.slice(0, 8), first[0]?.key);
-      prefetchDiscoverMeta(first, 0, 10);
+      void ensureCovers(first.slice(Math.max(0, startIndex - 1), startIndex + 8), first[startIndex]?.key);
+      prefetchDiscoverMeta(first, startIndex, 10);
       if (typeof window.requestIdleCallback === "function") {
         window.requestIdleCallback(() => void prefetchMeta(wantToReadBooks(), 2));
       } else {
@@ -239,6 +256,15 @@ export default function App() {
     void ensureCovers(window, queue[activeIndex]?.key);
     prefetchDiscoverMeta(queue, activeIndex, 8);
   }, [queue, activeIndex, ensureCovers]);
+
+  // Persist carousel position so browsing resumes after reopening the app.
+  useEffect(() => {
+    if (loading || !queue.length) return;
+    const timer = window.setTimeout(() => {
+      void saveDiscoverSession(queue, activeIndex);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [queue, activeIndex, loading]);
 
   // Fetch more candidates when running low.
   useEffect(() => {
@@ -287,7 +313,8 @@ export default function App() {
       );
       const merged = mergeWeights(weightsRef.current, delta);
       weightsRef.current = merged;
-      void saveWeights(merged);
+      profileRef.current = resolveTasteProfile(merged);
+      void saveSwipeWeights(merged);
 
       if (direction === "like") setLikedKeys((k) => [...k, book.key]);
 
@@ -315,7 +342,8 @@ export default function App() {
     }
     const merged = mergeWeights(weightsRef.current, undo.reverseWeights);
     weightsRef.current = merged;
-    void saveWeights(merged);
+    profileRef.current = resolveTasteProfile(merged);
+    void saveSwipeWeights(merged);
     setActiveIndex((i) => Math.max(0, i - 1));
     setUndo(null);
   }, [undo]);
@@ -380,7 +408,7 @@ export default function App() {
   const exhausted = !loading && (queue.length === 0 || activeIndex >= queue.length);
   const { isMobile } = useViewport();
   useShellTheme(isMobile);
-  const hideNav = isMobile && !!detailBook;
+  const hideNav = !!detailBook;
   const shellDark = isMobile;
 
   return (
@@ -543,15 +571,3 @@ export default function App() {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function mergeWeights(base: TasteWeight[], delta: TasteWeight[]): TasteWeight[] {
-  const map = new Map<string, TasteWeight>();
-  for (const w of base) map.set(`${w.feature_type}:${w.feature_value}`, { ...w });
-  for (const d of delta) {
-    const k = `${d.feature_type}:${d.feature_value}`;
-    const existing = map.get(k);
-    if (existing) existing.weight += d.weight;
-    else map.set(k, { ...d });
-  }
-  return [...map.values()];
-}

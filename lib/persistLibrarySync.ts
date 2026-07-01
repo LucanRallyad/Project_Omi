@@ -75,4 +75,5 @@ export async function persistLibrarySync(
       onConflict: "profile_id,feature_type,feature_value",
     })
   );
+  // swipe_weights are untouched — in-app learning survives library sync.
 }

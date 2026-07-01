@@ -9,7 +9,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import type { LibraryBook, TasteWeight } from "../src/types";
+import type { LibraryBook } from "../src/types";
 import {
   buildTasteProfile,
   nonCandidateLibraryKeys,
@@ -35,18 +35,6 @@ function loadEnvLocal(): void {
     const value = trimmed.slice(eq + 1).trim();
     if (!process.env[key]) process.env[key] = value;
   }
-}
-
-function mergeWeights(base: TasteWeight[], delta: TasteWeight[]): TasteWeight[] {
-  const map = new Map<string, TasteWeight>();
-  for (const w of base) map.set(`${w.feature_type}:${w.feature_value}`, { ...w });
-  for (const d of delta) {
-    const key = `${d.feature_type}:${d.feature_value}`;
-    const existing = map.get(key);
-    if (existing) existing.weight += d.weight;
-    else map.set(key, { ...d });
-  }
-  return [...map.values()];
 }
 
 async function upsertBatches<T extends Record<string, unknown>>(
@@ -106,15 +94,13 @@ async function main() {
   }
 
   const libraryWeights = tasteWeightsFromProfile(buildTasteProfile());
+  const weightRows = libraryWeights.map((w) => ({ ...w, profile_id: PROFILE_ID }));
 
-  const { data: existingWeights, error: weightLoadError } = await supabase
+  const { error: deleteError } = await supabase
     .from("taste_weights")
-    .select("feature_type, feature_value, weight")
+    .delete()
     .eq("profile_id", PROFILE_ID);
-  if (weightLoadError) throw new Error(weightLoadError.message);
-
-  const mergedWeights = mergeWeights(libraryWeights, (existingWeights ?? []) as TasteWeight[]);
-  const weightRows = mergedWeights.map((w) => ({ ...w, profile_id: PROFILE_ID }));
+  if (deleteError) throw new Error(deleteError.message);
 
   await upsertBatches("taste_weights", weightRows, async (batch) =>
     supabase.from("taste_weights").upsert(batch, {

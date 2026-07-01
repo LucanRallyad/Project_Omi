@@ -78,6 +78,24 @@ create table if not exists public.goodreads_sync_runs (
   error_message text
 );
 
+-- Discover carousel: ordered queue + scroll index so browsing resumes across sessions.
+create table if not exists public.discover_session (
+  profile_id   text not null default 'romi',
+  queue_json   jsonb not null default '[]',
+  active_index integer not null default 0,
+  updated_at   timestamptz not null default now(),
+  primary key (profile_id)
+);
+
+-- In-app swipe learning — kept separate from library baseline taste_weights.
+create table if not exists public.swipe_weights (
+  profile_id    text not null default 'romi',
+  feature_type  text not null check (feature_type in ('author', 'genre')),
+  feature_value text not null,
+  weight        double precision not null default 0,
+  primary key (profile_id, feature_type, feature_value)
+);
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------------------
@@ -87,6 +105,8 @@ alter table public.taste_weights enable row level security;
 alter table public.book_cache    enable row level security;
 alter table public.library_books enable row level security;
 alter table public.goodreads_sync_runs enable row level security;
+alter table public.discover_session enable row level security;
+alter table public.swipe_weights enable row level security;
 
 -- Single-profile policies: allow all operations only for the 'romi' profile.
 drop policy if exists "romi swipes" on public.swipes;
@@ -111,4 +131,12 @@ create policy "romi library" on public.library_books
 
 drop policy if exists "romi sync runs" on public.goodreads_sync_runs;
 create policy "romi sync runs" on public.goodreads_sync_runs
+  for all using (profile_id = 'romi') with check (profile_id = 'romi');
+
+drop policy if exists "romi discover session" on public.discover_session;
+create policy "romi discover session" on public.discover_session
+  for all using (profile_id = 'romi') with check (profile_id = 'romi');
+
+drop policy if exists "romi swipe weights" on public.swipe_weights;
+create policy "romi swipe weights" on public.swipe_weights
   for all using (profile_id = 'romi') with check (profile_id = 'romi');

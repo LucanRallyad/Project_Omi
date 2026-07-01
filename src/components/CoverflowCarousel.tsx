@@ -172,15 +172,26 @@ export function CoverflowCarousel({
           <ActionButton label="Pass" onClick={() => swipeRef.current?.trigger("pass")} tone="pass" dark={isMobile}>
             <X size={isMobile ? 24 : 26} strokeWidth={2.6} />
           </ActionButton>
-          <ActionButton
-            label="Skip"
-            onClick={() => swipeRef.current?.trigger("skip")}
-            tone="skip"
-            dark={isMobile}
-            small
-          >
-            <ChevronUp size={22} strokeWidth={2.6} />
-          </ActionButton>
+          {isMobile ? (
+            <ActionButton
+              label="Skip"
+              onClick={() => swipeRef.current?.trigger("skip")}
+              tone="skip"
+              dark
+              small
+            >
+              <ChevronUp size={22} strokeWidth={2.6} />
+            </ActionButton>
+          ) : (
+            <ActionButton
+              label="Next book"
+              onClick={() => onBrowse(Math.min(books.length - 1, activeIndex + 1))}
+              tone="skip"
+              small
+            >
+              <ChevronUp size={22} strokeWidth={2.6} className="rotate-90" />
+            </ActionButton>
+          )}
           <ActionButton
             label="Details"
             onClick={() => onOpenDetail(activeBook)}
