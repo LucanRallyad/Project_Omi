@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "DM Sans", system-ui, sans-serif;
+  color: #3d2b1f;
+  background-color: #f5f0e8;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+@layer components {
+  .font-display {
+    font-family: "Cormorant Garamond", Georgia, serif;
+  }
+
+  /* Warm cream gradient for desktop backdrop */
+  .bg-warm {
+    background:
+      radial-gradient(120% 90% at 15% 10%, #fdf8f2 0%, transparent 55%),
+      radial-gradient(120% 90% at 85% 90%, #f9e4e9 0%, transparent 55%),
+      linear-gradient(135deg, #f5f0e8 0%, #efe6da 100%);
+    background-color: #f5f0e8;
+  }
+
+  /* Dark charcoal gradient for the mobile / immersive mode */
+  .bg-dusk {
+    background:
+      radial-gradient(120% 90% at 20% 0%, #2a2220 0%, transparent 55%),
+      radial-gradient(120% 90% at 80% 100%, #3a2730 0%, transparent 55%),
+      linear-gradient(160deg, #1a1615 0%, #221b1a 100%);
+  }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+  }
+
+  .glass-dark {
+    background: rgba(30, 24, 22, 0.45);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .shimmer-bg {
+    background: linear-gradient(
+      100deg,
+      rgba(230, 220, 210, 0.4) 30%,
+      rgba(249, 228, 233, 0.9) 50%,
+      rgba(230, 220, 210, 0.4) 70%
+    );
+    background-size: 200% 100%;
+  }
+}
+
+/* Hide scrollbars on the shelves for a cleaner look, keep scrollability */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

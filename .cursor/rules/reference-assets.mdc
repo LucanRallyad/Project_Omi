@@ -1,0 +1,16 @@
+---
+description: Points agents to design/animation reference images and video for the Romi book recommender
+alwaysApply: true
+---
+
+# Reference assets
+
+All initial inspiration images and the animation reference video live in **`reference/`** at the project root.
+
+## Before building UI or motion
+
+1. Read `reference/README.md` for a catalog of each file and its purpose.
+2. **Animation:** `reference/ScreenRecording_06-30-2026 18-42-32_1.mov` is the primary spec for the 3D coverflow carousel. Use ffmpeg frame extraction if you cannot play `.mov` directly.
+3. **Visual mood:** JPEGs in `reference/` define the cozy cream/blush literary aesthetic and pink-floral fallback covers.
+
+Do not assume reference files are in the project root — they were moved into `reference/` for organization.
