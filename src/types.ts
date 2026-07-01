@@ -32,6 +32,10 @@ export interface LibraryBook {
   pages: number | null;
   /** Baked cover URL from scripts/fetchLibraryCovers.ts (optional). */
   coverUrl?: string | null;
+  /** Synopsis from Goodreads RSS / sync (optional). */
+  description?: string | null;
+  /** Goodreads work/edition id for deduping sync rows. */
+  goodreadsBookId?: string | null;
 }
 
 /** A candidate book to recommend (may originate from the library or an API). */

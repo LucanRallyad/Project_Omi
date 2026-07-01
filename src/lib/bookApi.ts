@@ -6,7 +6,10 @@
  */
 import type { Book, BookMeta } from "../types";
 import { firstValidCoverUrl } from "./coverUtils";
+import { fetchGoodreadsDescription } from "./goodreads";
 import { getCachedMeta, patchCachedCover, setCachedMeta } from "./cache";
+import { getLibraryDescription } from "./libraryDescriptions";
+import { pickBestDescription } from "./textUtils";
 import {
   fetchHardcoverCoverUrl,
   fetchHardcoverMeta,
@@ -120,26 +123,35 @@ function formatPrice(vol: GoogleVolume): string | null {
   }
 }
 
-async function fetchGoogleVolume(book: Book): Promise<GoogleVolume | null> {
-  if (googleLimiter.isPaused()) return null;
+async function fetchGoogleVolumes(book: Book, maxResults = 3): Promise<GoogleVolume[]> {
+  if (googleLimiter.isPaused()) return [];
   const query = book.isbn13
     ? `isbn:${book.isbn13}`
     : `intitle:${book.title} inauthor:${book.author}`;
-  const url = googleBooksUrl({ q: query, maxResults: 1, country: "US" });
+  const url = googleBooksUrl({ q: query, maxResults, country: "US" });
   try {
     return await googleLimiter.run(async () => {
       const res = await fetch(url);
       if (res.status === 429) {
         googleLimiter.pause();
-        return null;
+        return [] as GoogleVolume[];
       }
-      if (!res.ok) return null;
+      if (!res.ok) return [] as GoogleVolume[];
       const data = await res.json();
-      return (data.items?.[0] as GoogleVolume) ?? null;
+      return (data.items ?? []) as GoogleVolume[];
     });
   } catch {
-    return null;
+    return [];
   }
+}
+
+async function fetchGoogleVolume(book: Book): Promise<GoogleVolume | null> {
+  const volumes = await fetchGoogleVolumes(book, 3);
+  return volumes[0] ?? null;
+}
+
+function googleDescriptions(volumes: GoogleVolume[]): string | null {
+  return pickBestDescription(...volumes.map((v) => v.volumeInfo?.description));
 }
 
 async function fetchGoogleCoverUrl(book: Book): Promise<string | null> {
@@ -229,24 +241,35 @@ async function pickCoverUrl(
 
 export async function fetchBookMeta(book: Book): Promise<BookMeta> {
   const cached = await getCachedMeta(book.key);
-  if (cached) return cached;
+  if (cached?.description) return cached;
 
-  const [hc, ol, vol] = await Promise.all([
+  const bakedDescription = getLibraryDescription(book.key);
+  const [hc, ol, volumes, grDesc] = await Promise.all([
     fetchHardcoverMeta(book),
     fetchOpenLibraryMeta(book),
-    fetchGoogleVolume(book),
+    fetchGoogleVolumes(book, 3),
+    book.goodreadsUrl ? fetchGoodreadsDescription(book.goodreadsUrl) : Promise.resolve(null),
   ]);
+  const vol = volumes[0] ?? null;
   const info = vol?.volumeInfo;
 
+  const description = pickBestDescription(
+    bakedDescription,
+    hc?.description,
+    ol.description,
+    googleDescriptions(volumes),
+    grDesc
+  );
+
   const meta: BookMeta = {
-    coverUrl: await pickCoverUrl(book, hc, ol, vol),
-    description: hc?.description ?? ol.description ?? info?.description?.replace(/<[^>]+>/g, "").trim() ?? null,
-    categories: mergeCategories(hc?.categories, ol.categories, info?.categories, book.categories),
-    price: vol ? formatPrice(vol) : null,
-    buyUrl: vol?.saleInfo?.buyLink ?? bookshopSearch(book),
-    pageCount: hc?.pageCount ?? ol.pageCount ?? info?.pageCount ?? null,
-    publishedDate: hc?.publishedDate ?? ol.publishedDate ?? info?.publishedDate ?? null,
-    previewLink: ol.previewLink ?? cleanGoogleThumb(info?.previewLink) ?? null,
+    coverUrl: cached?.coverUrl ?? (await pickCoverUrl(book, hc, ol, vol)),
+    description,
+    categories: mergeCategories(cached?.categories, hc?.categories, ol.categories, info?.categories, book.categories),
+    price: vol ? formatPrice(vol) : cached?.price ?? null,
+    buyUrl: vol?.saleInfo?.buyLink ?? cached?.buyUrl ?? bookshopSearch(book),
+    pageCount: hc?.pageCount ?? ol.pageCount ?? info?.pageCount ?? cached?.pageCount ?? null,
+    publishedDate: hc?.publishedDate ?? ol.publishedDate ?? info?.publishedDate ?? cached?.publishedDate ?? null,
+    previewLink: ol.previewLink ?? cleanGoogleThumb(info?.previewLink) ?? cached?.previewLink ?? null,
   };
 
   await setCachedMeta(book.key, meta);

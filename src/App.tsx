@@ -10,7 +10,7 @@ import {
   wantToReadBooks,
   type TasteProfile,
 } from "./lib/recommender";
-import { fetchCoverUrl } from "./lib/bookApi";
+import { fetchCoverUrl, prefetchMeta } from "./lib/bookApi";
 import { allLibraryCoverEntries } from "./lib/libraryCovers";
 import {
   loadRegistry,
@@ -34,6 +34,7 @@ import { EmptyState } from "./components/EmptyState";
 import { UndoToast } from "./components/UndoToast";
 import { PasscodeGate } from "./components/PasscodeGate";
 import type { SwipeAction } from "./components/SwipeCard";
+import { initLibrary } from "./lib/libraryStore";
 import { useViewport } from "./hooks/useViewport";
 
 interface UndoState {
@@ -148,6 +149,8 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      await initLibrary();
+
       const [swipes, savedList, learned] = await Promise.all([
         loadSwipes(),
         loadSaved(),
@@ -195,6 +198,7 @@ export default function App() {
 
       void ensureCovers(first.slice(0, 10), first[0]?.key);
       void ensureCovers(wantToReadBooks());
+      void prefetchMeta(wantToReadBooks(), 4);
     })();
     return () => {
       cancelled = true;

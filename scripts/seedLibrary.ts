@@ -15,6 +15,7 @@ import {
   nonCandidateLibraryKeys,
   tasteWeightsFromProfile,
 } from "../src/lib/libraryProfile";
+import { setLibrary } from "../src/lib/libraryStore";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -76,6 +77,7 @@ async function main() {
   }
 
   const library = JSON.parse(readFileSync(LIBRARY_PATH, "utf8")) as LibraryBook[];
+  setLibrary(library);
   const excludeKeys = new Set(nonCandidateLibraryKeys());
   const excludeBooks = library.filter((b) => excludeKeys.has(b.key));
 

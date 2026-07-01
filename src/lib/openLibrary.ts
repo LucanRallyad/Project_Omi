@@ -13,7 +13,7 @@ const OL_SEARCH = `${OPEN_LIBRARY}/search.json`;
 const OL_BOOKS = `${OPEN_LIBRARY}/api/books`;
 
 const SEARCH_FIELDS =
-  "key,title,author_name,isbn,first_publish_year,ratings_average,ratings_count,cover_i,subject";
+  "key,title,author_name,isbn,first_publish_year,ratings_average,ratings_count,cover_i,subject,first_sentence";
 
 /** After a connection failure, skip API calls for this long (covers CDN still used). */
 const OL_DOWN_MS = 10 * 60 * 1000;
@@ -46,6 +46,7 @@ interface OlSearchDoc {
   ratings_count?: number;
   cover_i?: number;
   subject?: string[];
+  first_sentence?: string[];
 }
 
 interface OlEditionDetails {
@@ -250,6 +251,11 @@ export async function fetchOpenLibraryMeta(book: Book): Promise<OpenLibraryMeta>
     edition?.details?.works?.[0]?.key ?? searchDoc?.key ?? null;
   const work = workKey ? await fetchWork(workKey) : null;
 
+  const firstSentence = searchDoc?.first_sentence?.[0] ?? null;
+  const description =
+    parseDescription(work?.description) ??
+    (firstSentence ? parseDescription(firstSentence) : null);
+
   const coverUrl = await resolveCoverUrl(edition, searchDoc, isbn13);
   const editionSubjects = subjectsFromEdition(edition?.details);
   const categories =
@@ -265,7 +271,7 @@ export async function fetchOpenLibraryMeta(book: Book): Promise<OpenLibraryMeta>
 
   return {
     coverUrl,
-    description: parseDescription(work?.description),
+    description,
     categories,
     pageCount: edition?.details?.number_of_pages ?? null,
     publishedDate,

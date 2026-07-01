@@ -2,10 +2,11 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { executeHardcoverGraphQL } from "./lib/hardcoverProxy";
+import { fetchGoodreadsDescription } from "./lib/goodreadsScrape";
 
-function hardcoverDevProxy(env: Record<string, string>): Plugin {
+function apiDevProxies(env: Record<string, string>): Plugin {
   return {
-    name: "hardcover-dev-proxy",
+    name: "api-dev-proxies",
     configureServer(server) {
       server.middlewares.use("/api/hardcover", async (req, res) => {
         if (req.method === "OPTIONS") {
@@ -57,6 +58,42 @@ function hardcoverDevProxy(env: Record<string, string>): Plugin {
           }
         });
       });
+
+      server.middlewares.use("/api/goodreads", async (req, res) => {
+        if (req.method === "OPTIONS") {
+          res.statusCode = 204;
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+          res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+          res.end();
+          return;
+        }
+
+        if (req.method !== "GET") {
+          res.statusCode = 405;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: "Method not allowed" }));
+          return;
+        }
+
+        try {
+          const url = new URL(req.url ?? "", "http://localhost").searchParams.get("url");
+          if (!url || !url.includes("goodreads.com/book/show/")) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Missing or invalid Goodreads book URL" }));
+            return;
+          }
+          const description = await fetchGoodreadsDescription(url);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ description }));
+        } catch {
+          res.statusCode = 502;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: "Goodreads request failed" }));
+        }
+      });
     },
   };
 }
@@ -67,7 +104,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
-      hardcoverDevProxy(env),
+      apiDevProxies(env),
       VitePWA({
         registerType: "autoUpdate",
         includeAssets: ["favicon.svg"],

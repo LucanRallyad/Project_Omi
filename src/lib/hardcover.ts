@@ -297,8 +297,10 @@ export async function fetchHardcoverCoverUrl(book: Book): Promise<string | null>
   return doc?.image?.url ?? null;
 }
 
-/** Fetch cover + metadata from Hardcover (edition lookup or title search). */
+/** Fetch cover + metadata from Hardcover (edition lookup merged with title search). */
 export async function fetchHardcoverMeta(book: Book): Promise<HardcoverMeta | null> {
+  let editionMeta: HardcoverMeta | null = null;
+
   if (book.isbn13) {
     let data = await hardcoverQuery<{ editions?: HcEdition[] }>(EDITION_BY_ISBN13, {
       isbn: book.isbn13,
@@ -309,16 +311,26 @@ export async function fetchHardcoverMeta(book: Book): Promise<HardcoverMeta | nu
       data = await hardcoverQuery<{ editions?: HcEdition[] }>(EDITION_BY_ISBN10, { isbn: isbn10 });
       edition = data?.editions?.[0];
     }
-    if (edition) {
-      const meta = editionToMeta(edition);
-      if (meta?.coverUrl) return meta;
-    }
+    if (edition) editionMeta = editionToMeta(edition);
   }
 
   const query = `${book.title} ${book.author}`;
   const data = await hardcoverQuery<{ search?: { results?: unknown } }>(SEARCH_BY_TITLE, {
     query,
   });
-  const doc = matchSearchDoc(parseSearchHits(data?.search?.results), book);
-  return doc ? searchDocToMeta(doc) : null;
+  const searchMeta = (() => {
+    const doc = matchSearchDoc(parseSearchHits(data?.search?.results), book);
+    return doc ? searchDocToMeta(doc) : null;
+  })();
+
+  if (!editionMeta && !searchMeta) return null;
+
+  return {
+    coverUrl: editionMeta?.coverUrl ?? searchMeta?.coverUrl ?? null,
+    description: editionMeta?.description ?? searchMeta?.description ?? null,
+    categories:
+      (searchMeta?.categories?.length ? searchMeta.categories : editionMeta?.categories) ?? [],
+    pageCount: editionMeta?.pageCount ?? searchMeta?.pageCount ?? null,
+    publishedDate: editionMeta?.publishedDate ?? searchMeta?.publishedDate ?? null,
+  };
 }

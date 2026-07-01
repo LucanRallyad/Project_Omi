@@ -5,5 +5,11 @@
   "framework": "vite",
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/sync-goodreads",
+      "schedule": "0 8 * * 0"
+    }
   ]
 }

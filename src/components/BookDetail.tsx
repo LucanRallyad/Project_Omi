@@ -210,7 +210,7 @@ function BookInfo({
       </div>
 
       <div className="mt-4 min-h-[3rem]">
-        {loading ? (
+        {loading && !meta.description ? (
           <div className="space-y-2">
             <div className="h-3 w-full rounded shimmer-bg animate-shimmer" />
             <div className="h-3 w-11/12 rounded shimmer-bg animate-shimmer" />

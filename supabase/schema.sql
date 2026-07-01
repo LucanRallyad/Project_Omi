@@ -43,6 +43,41 @@ create table if not exists public.book_cache (
   fetched_at    timestamptz not null default now()
 );
 
+-- Romi's synced Goodreads library (RSS pull; updated by cron or npm run sync-goodreads).
+create table if not exists public.library_books (
+  profile_id         text not null default 'romi',
+  book_key           text not null,
+  title              text not null,
+  clean_title        text not null,
+  author             text not null,
+  status             text not null,
+  rating             smallint,
+  average_rating     double precision,
+  ratings_count      integer,
+  series             text,
+  series_number      double precision,
+  isbn13             text,
+  goodreads_url      text,
+  goodreads_book_id  text,
+  tags               text[] not null default '{}',
+  pages              integer,
+  cover_url          text,
+  description        text,
+  synced_at          timestamptz not null default now(),
+  primary key (profile_id, book_key)
+);
+
+-- Audit log for scheduled Goodreads sync runs.
+create table if not exists public.goodreads_sync_runs (
+  id            bigint generated always as identity primary key,
+  profile_id    text not null default 'romi',
+  started_at    timestamptz not null default now(),
+  finished_at   timestamptz,
+  books_count   integer,
+  status        text not null default 'running',
+  error_message text
+);
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------------------
@@ -50,6 +85,8 @@ alter table public.swipes        enable row level security;
 alter table public.saved_books   enable row level security;
 alter table public.taste_weights enable row level security;
 alter table public.book_cache    enable row level security;
+alter table public.library_books enable row level security;
+alter table public.goodreads_sync_runs enable row level security;
 
 -- Single-profile policies: allow all operations only for the 'romi' profile.
 drop policy if exists "romi swipes" on public.swipes;
@@ -67,3 +104,11 @@ create policy "romi weights" on public.taste_weights
 drop policy if exists "romi cache" on public.book_cache;
 create policy "romi cache" on public.book_cache
   for all using (true) with check (true);
+
+drop policy if exists "romi library" on public.library_books;
+create policy "romi library" on public.library_books
+  for all using (profile_id = 'romi') with check (profile_id = 'romi');
+
+drop policy if exists "romi sync runs" on public.goodreads_sync_runs;
+create policy "romi sync runs" on public.goodreads_sync_runs
+  for all using (profile_id = 'romi') with check (profile_id = 'romi');

@@ -3,11 +3,15 @@
  * Lets the Want to Read shelf render instantly without waiting on 45 API races.
  */
 import libraryCoversData from "../data/library-covers.json";
+import { getLibrary } from "./libraryStore";
 
 const libraryCovers = libraryCoversData as Record<string, string>;
 
 export function getLibraryCoverUrl(bookKey: string): string | null {
-  return libraryCovers[bookKey] ?? null;
+  const baked = libraryCovers[bookKey];
+  if (baked) return baked;
+  const synced = getLibrary().find((b) => b.key === bookKey)?.coverUrl;
+  return synced ?? null;
 }
 
 export function allLibraryCoverEntries(): Record<string, string> {

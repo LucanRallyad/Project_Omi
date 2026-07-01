@@ -3,9 +3,7 @@
  * Kept separate from API/search code so CLI seed scripts can import it in Node.
  */
 import type { Book, LibraryBook, TasteWeight } from "../types";
-import libraryData from "../data/library.json";
-
-const library = libraryData as unknown as LibraryBook[];
+import { getLibrary } from "./libraryStore";
 
 /** Map shelf tags to broad genre/subject terms book APIs understand. */
 const TAG_TO_SUBJECT: Record<string, string> = {
@@ -67,7 +65,7 @@ export function bookIdentityKeys(book: {
 /** All keys/aliases for read, currently-reading, and DNF library rows. */
 export function buildLibraryExclusionSet(): Set<string> {
   const set = new Set<string>();
-  for (const book of library) {
+  for (const book of getLibrary()) {
     if (book.status === "want-to-read") continue;
     for (const key of bookIdentityKeys({
       key: book.key,
@@ -102,7 +100,7 @@ export function isExcludedBook(
 }
 
 export function wantToReadLibraryBooks(): LibraryBook[] {
-  return library.filter((b) => b.status === "want-to-read");
+  return getLibrary().filter((b) => b.status === "want-to-read");
 }
 
 /** Rating (1-5) -> contribution centered around a neutral 3-star read. */
@@ -115,7 +113,7 @@ export function buildTasteProfile(): TasteProfile {
   const authorWeights = new Map<string, number>();
   const genreWeights = new Map<string, number>();
 
-  for (const book of library) {
+  for (const book of getLibrary()) {
     let weight: number;
     if (book.status === "did-not-finish") weight = -1.5;
     else if (book.status === "want-to-read") weight = 0.75;
@@ -209,7 +207,7 @@ export function applyLearnedWeights(profile: TasteProfile, learned: TasteWeight[
 }
 
 export function libraryBooks(): LibraryBook[] {
-  return library;
+  return getLibrary();
 }
 
 /** Map a want-to-read library row to a discover-queue Book. */

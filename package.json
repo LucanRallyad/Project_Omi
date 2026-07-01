@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "parse-library": "tsx scripts/parseLibrary.ts",
     "fetch-covers": "tsx scripts/fetchLibraryCovers.ts",
+    "fetch-descriptions": "tsx scripts/fetchLibraryDescriptions.ts",
+    "fetch-library-meta": "tsx scripts/fetchLibraryCovers.ts && tsx scripts/fetchLibraryDescriptions.ts",
     "seed-library": "tsx scripts/parseLibrary.ts && tsx scripts/seedLibrary.ts",
+    "sync-goodreads": "tsx scripts/syncGoodreads.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

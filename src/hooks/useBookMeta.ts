@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Book, BookMeta } from "../types";
 import { fetchBookMeta } from "../lib/bookApi";
+import { getLibraryDescription } from "../lib/libraryDescriptions";
 
 const EMPTY: BookMeta = {
   coverUrl: null,
@@ -13,8 +14,14 @@ const EMPTY: BookMeta = {
   previewLink: null,
 };
 
+function initialMeta(book: Book | null): BookMeta {
+  if (!book) return EMPTY;
+  const description = getLibraryDescription(book.key);
+  return description ? { ...EMPTY, description } : EMPTY;
+}
+
 export function useBookMeta(book: Book | null) {
-  const [meta, setMeta] = useState<BookMeta>(EMPTY);
+  const [meta, setMeta] = useState<BookMeta>(() => initialMeta(book));
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -22,6 +29,7 @@ export function useBookMeta(book: Book | null) {
       setMeta(EMPTY);
       return;
     }
+    setMeta(initialMeta(book));
     let cancelled = false;
     setLoading(true);
     fetchBookMeta(book)
