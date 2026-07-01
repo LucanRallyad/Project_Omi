@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Bookmark, Heart, BookMarked, Sparkles } from "lucide-react";
 import type { Book, SavedBook, ShelfView, SwipeDirection, TasteWeight } from "./types";
@@ -10,7 +10,7 @@ import {
   wantToReadBooks,
   type TasteProfile,
 } from "./lib/recommender";
-import { fetchCoverUrl, prefetchMeta } from "./lib/bookApi";
+import { fetchCoverUrl, prefetchDiscoverMeta, prefetchMeta } from "./lib/bookApi";
 import { allLibraryCoverEntries } from "./lib/libraryCovers";
 import {
   loadRegistry,
@@ -28,7 +28,9 @@ import { WelcomeScreen } from "./components/WelcomeScreen";
 import { NavBar } from "./components/NavBar";
 import { CoverflowCarousel } from "./components/CoverflowCarousel";
 import { CarouselSkeleton } from "./components/CarouselSkeleton";
-import { BookDetail } from "./components/BookDetail";
+const BookDetail = lazy(() =>
+  import("./components/BookDetail").then((m) => ({ default: m.BookDetail }))
+);
 import { Shelf, type ShelfItem } from "./components/Shelf";
 import { EmptyState } from "./components/EmptyState";
 import { UndoToast } from "./components/UndoToast";
@@ -36,6 +38,7 @@ import { PasscodeGate } from "./components/PasscodeGate";
 import type { SwipeAction } from "./components/SwipeCard";
 import { initLibrary } from "./lib/libraryStore";
 import { useViewport } from "./hooks/useViewport";
+import { useShellTheme } from "./hooks/useShellTheme";
 
 interface UndoState {
   book: Book;
@@ -119,7 +122,7 @@ export default function App() {
       ];
     }
 
-    const concurrency = 10;
+    const concurrency = typeof window !== "undefined" && window.innerWidth < 768 ? 3 : 6;
     const load = async (book: Book) => {
       coversInFlight.current.add(book.key);
       try {
@@ -196,9 +199,12 @@ export default function App() {
         }
       }
 
-      void ensureCovers(first.slice(0, 10), first[0]?.key);
-      void ensureCovers(wantToReadBooks());
-      void prefetchMeta(wantToReadBooks(), 4);
+      void ensureCovers(first.slice(0, 8), first[0]?.key);
+      prefetchDiscoverMeta(first, 0, 6);
+      const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 1200));
+      idle(() => {
+        void prefetchMeta(wantToReadBooks(), 2);
+      });
     })();
     return () => {
       cancelled = true;
@@ -208,8 +214,9 @@ export default function App() {
   // Keep the cover window warm as the active card moves.
   useEffect(() => {
     if (!queue.length) return;
-    const window = queue.slice(Math.max(0, activeIndex - 1), activeIndex + 6);
+    const window = queue.slice(Math.max(0, activeIndex - 1), activeIndex + 5);
     void ensureCovers(window, queue[activeIndex]?.key);
+    prefetchDiscoverMeta(queue, activeIndex, 5);
   }, [queue, activeIndex, ensureCovers]);
 
   // Fetch more candidates when running low.
@@ -351,11 +358,18 @@ export default function App() {
   const activeBook = queue[activeIndex];
   const exhausted = !loading && (queue.length === 0 || activeIndex >= queue.length);
   const { isMobile } = useViewport();
+  useShellTheme(isMobile);
   const hideNav = isMobile && !!detailBook;
+  const shellDark = isMobile;
 
   return (
     <PasscodeGate>
-      <div className="relative h-full w-full overflow-hidden bg-warm">
+      <div className="relative h-full w-full overflow-hidden">
+        <div
+          className={`shell-backdrop ${shellDark ? "bg-dusk" : "bg-warm"}`}
+          aria-hidden
+        />
+        <div className="relative z-10 h-full w-full">
         <AnimatePresence>
           {!entered && <WelcomeScreen key="welcome" onEnter={() => setEntered(true)} />}
         </AnimatePresence>
@@ -370,6 +384,7 @@ export default function App() {
               }}
               savedCount={saved.length}
               likedCount={likedKeys.length}
+              dark={shellDark}
               hidden={hideNav}
             />
 
@@ -380,6 +395,7 @@ export default function App() {
                     <CarouselSkeleton />
                   ) : exhausted ? (
                     <EmptyState
+                      dark={shellDark}
                       icon={<Sparkles size={30} />}
                       title="You've seen them all"
                       message="You've been through every recommendation for now. Check your Want to Read shelf, or come back soon for fresh picks."
@@ -406,6 +422,7 @@ export default function App() {
               {view === "saved" &&
                 (savedItems.length ? (
                   <Shelf
+                    dark={shellDark}
                     title="Saved"
                     subtitle={`${savedItems.length} book${savedItems.length === 1 ? "" : "s"} bookmarked for later`}
                     items={savedItems}
@@ -415,6 +432,7 @@ export default function App() {
                   />
                 ) : (
                   <EmptyState
+                    dark={shellDark}
                     icon={<Bookmark size={30} />}
                     title="Nothing saved yet"
                     message="Tap the heart on any book to bookmark it here for later."
@@ -425,6 +443,7 @@ export default function App() {
               {view === "liked" &&
                 (likedItems.length ? (
                   <Shelf
+                    dark={shellDark}
                     title="Loved"
                     subtitle={`${likedItems.length} book${likedItems.length === 1 ? "" : "s"} you swiped right on`}
                     items={likedItems}
@@ -432,6 +451,7 @@ export default function App() {
                   />
                 ) : (
                   <EmptyState
+                    dark={shellDark}
                     icon={<Heart size={30} />}
                     title="No loves yet"
                     message="Swipe right on books you'd read. They'll gather here and teach the recommendations what you like."
@@ -442,6 +462,7 @@ export default function App() {
               {view === "want-to-read" &&
                 (wantItems.length ? (
                   <Shelf
+                    dark={shellDark}
                     title="Want to Read"
                     subtitle={`${wantItems.length} books from your Goodreads shelf`}
                     items={wantItems}
@@ -449,6 +470,7 @@ export default function App() {
                   />
                 ) : (
                   <EmptyState
+                    dark={shellDark}
                     icon={<BookMarked size={30} />}
                     title="Your Want to Read shelf is empty"
                     message="Books you marked 'Want to Read' on Goodreads will show up here."
@@ -485,6 +507,7 @@ export default function App() {
             />
           )}
         </AnimatePresence>
+        </div>
       </div>
     </PasscodeGate>
   );

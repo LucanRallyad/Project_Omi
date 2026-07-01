@@ -4,6 +4,17 @@
 
 :root {
   color-scheme: light;
+  --shell-bg: #f5f0e8;
+  --shell-bg-dark: #1a1615;
+}
+
+html {
+  background-color: var(--shell-bg);
+}
+
+html[data-shell="dark"] {
+  color-scheme: dark;
+  background-color: var(--shell-bg-dark);
 }
 
 * {
@@ -16,18 +27,36 @@ body,
   height: 100%;
   /* dvh tracks the visible viewport on mobile (address bar show/hide) */
   height: 100dvh;
+  /* iOS Safari fallback when dvh is unavailable */
+  min-height: -webkit-fill-available;
 }
 
 body {
   margin: 0;
   font-family: "DM Sans", system-ui, sans-serif;
   color: #3d2b1f;
-  background-color: #f5f0e8;
+  background-color: inherit;
   overflow: hidden;
   overscroll-behavior: none;
 }
 
+#root {
+  position: relative;
+  isolation: isolate;
+}
+
 @layer components {
+  /* Fixed layer that bleeds into notch / home-indicator safe areas */
+  .shell-backdrop {
+    position: fixed;
+    z-index: 0;
+    pointer-events: none;
+    top: calc(-1 * env(safe-area-inset-top, 0px));
+    right: calc(-1 * env(safe-area-inset-right, 0px));
+    bottom: calc(-1 * env(safe-area-inset-bottom, 0px));
+    left: calc(-1 * env(safe-area-inset-left, 0px));
+  }
+
   .font-display {
     font-family: "Cormorant Garamond", Georgia, serif;
   }

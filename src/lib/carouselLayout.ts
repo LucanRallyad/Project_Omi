@@ -14,6 +14,13 @@ export const MOBILE_SPRING = {
   mass: 0.75,
 };
 
+/** Cheaper than springs on mobile — avoids layout thrash during browse. */
+export const MOBILE_TWEEN = {
+  type: "tween" as const,
+  duration: 0.26,
+  ease: [0.25, 0.1, 0.25, 1] as [number, number, number, number],
+};
+
 export interface CardTransform {
   x: number;
   y: number;
@@ -22,13 +29,12 @@ export interface CardTransform {
   scale: number;
   opacity: number;
   z: number;
-  filter: string;
 }
 
 /** Reserve space for the floating nav + action bar on mobile discover. */
 export const MOBILE_CHROME = {
-  top: 72,
-  bottom: 128,
+  top: 48,
+  bottom: 88,
 };
 
 export function cardDimensions(width: number, height: number, isMobile: boolean) {
@@ -65,7 +71,6 @@ export function computeCardTransform(
         scale: 0.86,
         opacity: 0,
         z: -120,
-        filter: "blur(4px) brightness(0.8)",
       };
     }
 
@@ -76,11 +81,8 @@ export function computeCardTransform(
       rotateY: 0,
       rotateZ: sign * (5 + d * 4),
       scale: 1 - d * 0.085,
-      opacity: Math.max(0, 1 - d * 0.2),
+      opacity: isCenter ? 1 : Math.max(0.55, 1 - d * 0.18),
       z: -d * 55,
-      filter: isCenter
-        ? "blur(0px) brightness(1)"
-        : `blur(${Math.min(d * 1.2, 3)}px) brightness(${0.94 - d * 0.04})`,
     };
   }
 
@@ -93,8 +95,5 @@ export function computeCardTransform(
     scale: 1 - ad * 0.17,
     opacity: Math.max(0, 1 - ad * 0.38),
     z: -ad * 95,
-    filter: isCenter
-      ? "blur(0px) brightness(1) saturate(1)"
-      : `blur(${Math.min(ad * 1.5, 4)}px) brightness(${0.92 - ad * 0.06}) saturate(${0.96 - ad * 0.04})`,
   };
 }

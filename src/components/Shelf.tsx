@@ -15,15 +15,18 @@ interface ShelfProps {
   onOpen: (book: Book) => void;
   onRemove?: (book: Book) => void;
   removeLabel?: string;
+  dark?: boolean;
 }
 
-export function Shelf({ title, subtitle, items, onOpen, onRemove, removeLabel }: ShelfProps) {
+export function Shelf({ title, subtitle, items, onOpen, onRemove, removeLabel, dark = false }: ShelfProps) {
   return (
     <div className="h-full overflow-y-auto no-scrollbar px-4 pb-[max(5rem,env(safe-area-inset-bottom))] pt-[max(5.5rem,calc(env(safe-area-inset-top)+4rem))] sm:px-5">
       <div className="mx-auto max-w-5xl">
         <header className="mb-6 px-1">
-          <h2 className="font-display text-4xl font-semibold text-espresso">{title}</h2>
-          <p className="mt-1 text-espresso/60">{subtitle}</p>
+          <h2 className={`font-display text-4xl font-semibold ${dark ? "text-white" : "text-espresso"}`}>
+            {title}
+          </h2>
+          <p className={`mt-1 ${dark ? "text-white/60" : "text-espresso/60"}`}>{subtitle}</p>
         </header>
 
         <motion.div
