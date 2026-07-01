@@ -20,15 +20,9 @@ export interface GraphLink {
   kind: LinkKind;
 }
 
-const TAG_COLORS: Record<ShelfTag, string> = {
-  romance: "#D4849A",
-  "rom-coms": "#F4C2C2",
-  booktok: "#C9A961",
-  lgbtq: "#B794F4",
-  favorites: "#E8B86D",
-};
+import { OBSIDIAN_COLORS, OBSIDIAN_GROUP_COLORS } from "./obsidianGraphConfig";
 
-const DEFAULT_NODE_COLOR = "#E8DFD0";
+const DEFAULT_NODE_COLOR = OBSIDIAN_COLORS.node;
 
 function linkKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
@@ -36,7 +30,7 @@ function linkKey(a: string, b: string): string {
 
 function nodeColor(book: LibraryBook): string {
   for (const tag of ["favorites", "romance", "rom-coms", "lgbtq", "booktok"] as ShelfTag[]) {
-    if (book.tags.includes(tag)) return TAG_COLORS[tag];
+    if (book.tags.includes(tag)) return OBSIDIAN_GROUP_COLORS[tag];
   }
   return DEFAULT_NODE_COLOR;
 }

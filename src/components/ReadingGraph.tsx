@@ -456,7 +456,7 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
       <div
         className="pointer-events-none fixed left-1/2 z-[55] -translate-x-1/2 rounded-md border px-3 py-1.5 text-[11px]"
         style={{
-          top: "calc(max(1rem, env(safe-area-inset-top)) + 3.25rem)",
+          top: navOffset,
           background: OBSIDIAN_COLORS.controlsBg,
           borderColor: OBSIDIAN_COLORS.controlsBorder,
           color: OBSIDIAN_COLORS.controlsText,
@@ -482,7 +482,7 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
         className="pointer-events-auto fixed z-[55] flex flex-col overflow-hidden rounded-md border shadow-lg"
         style={{
           right: "max(1rem, env(safe-area-inset-right))",
-          bottom: "max(1rem, env(safe-area-inset-bottom))",
+          bottom: controlBottom,
           borderColor: OBSIDIAN_COLORS.controlsBorder,
           background: OBSIDIAN_COLORS.controlsBg,
         }}
@@ -491,7 +491,7 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
           type="button"
           aria-label="Zoom in"
           onClick={() => zoomBy(1.15)}
-          className="flex h-8 w-8 items-center justify-center transition-colors hover:bg-white/5"
+          className={`flex ${controlSize} items-center justify-center transition-colors hover:bg-white/5`}
           style={{ color: OBSIDIAN_COLORS.controlsText }}
         >
           <Plus size={16} />
@@ -501,7 +501,7 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
           type="button"
           aria-label="Zoom out"
           onClick={() => zoomBy(1 / 1.15)}
-          className="flex h-8 w-8 items-center justify-center transition-colors hover:bg-white/5"
+          className={`flex ${controlSize} items-center justify-center transition-colors hover:bg-white/5`}
           style={{ color: OBSIDIAN_COLORS.controlsText }}
         >
           <Minus size={16} />
@@ -517,10 +517,6 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
         onPointerUp={endPan}
         onPointerCancel={endPan}
         onPointerLeave={onPointerLeave}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onTouchCancel={onTouchEnd}
       >
         <canvas ref={canvasRef} className="pointer-events-none h-full w-full" />
 
