@@ -3,14 +3,16 @@
  *
  * 1. Seeds a "taste profile" (author + genre weights) from Romi's Goodreads
  *    library, weighted by her star ratings and personal shelf tags.
- * 2. Generates a candidate pool she hasn't read (want-to-read seeds, more by
- *    her favorite authors, and books in her strongest genres).
+ * 2. Generates a candidate pool of *new* books via API search (favorite authors,
+ *    genres, and loved series) — never re-surfaces her read shelf.
  * 3. Scores + ranks candidates against the taste profile.
  * 4. Learns online: each like/pass nudges the relevant author/genre weights.
  */
 import type { Book, SwipeDirection, TasteWeight } from "../types";
 import {
   buildTasteProfile,
+  buildLibraryExclusionSet,
+  isExcludedBook,
   libraryBooks,
   nonCandidateLibraryKeys,
   profileFromWeights,
@@ -25,6 +27,7 @@ import { dedupe, runPool, sleep } from "./requestQueue";
 
 export {
   buildTasteProfile,
+  buildLibraryExclusionSet,
   libraryBooks,
   nonCandidateLibraryKeys,
   profileFromWeights,
@@ -52,34 +55,31 @@ function scoreBook(book: Book, profile: TasteProfile): number {
     }
   }
 
-  if (book.fromWantToRead) score += 5;
-
   return score;
 }
 
 const seen = new Set<string>();
 
 /**
- * Generate a scored, de-duplicated candidate queue she hasn't read.
- * `exclude` should include already-read keys plus keys she has swiped on.
+ * Generate a scored, de-duplicated queue of *new* books she hasn't read.
+ * Want-to-read titles are excluded here — they have their own shelf.
  */
 export async function generateCandidates(
   profile: TasteProfile,
   exclude: Set<string>,
   limit = 30
 ): Promise<Book[]> {
+  const libraryExclude = buildLibraryExclusionSet();
   const cacheKey = `candidates:${limit}:${exclude.size}:${profile.topAuthors.slice(0, 4).join("|")}`;
 
   return dedupe(cacheKey, async () => {
     const pool = new Map<string, Book>();
 
     const add = (book: Book, reason: string) => {
-      if (exclude.has(book.key) || pool.has(book.key)) return;
+      if (isExcludedBook(book, exclude, libraryExclude) || pool.has(book.key)) return;
       if (!book.reason) book.reason = reason;
       pool.set(book.key, book);
     };
-
-    for (const b of wantToReadBooks()) add(b, b.reason ?? "On your Want to Read shelf");
 
     const rank = () =>
       [...pool.values()]
@@ -88,12 +88,6 @@ export async function generateCandidates(
         .sort((a, b) => b.score - a.score)
         .slice(0, limit)
         .map(({ book }) => book);
-
-    if (pool.size >= limit) {
-      const ranked = rank();
-      ranked.forEach((b) => seen.add(b.key));
-      return ranked;
-    }
 
     const authorTasks = profile.topAuthors.slice(0, 6).map(
       (author) => async () => {
@@ -135,7 +129,7 @@ export async function generateCandidates(
 
     await Promise.race([
       runPool([...authorTasks, ...genreTasks, ...crossTasks, ...seriesTasks], 3, 80),
-      sleep(7000),
+      sleep(8000),
     ]);
 
     const ranked = rank();

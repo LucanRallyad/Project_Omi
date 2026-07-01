@@ -5,12 +5,13 @@ import type { Book, SavedBook, ShelfView, SwipeDirection, TasteWeight } from "./
 import {
   generateCandidates,
   learnFromSwipe,
-  nonCandidateLibraryKeys,
+  buildLibraryExclusionSet,
   resolveTasteProfile,
   wantToReadBooks,
   type TasteProfile,
 } from "./lib/recommender";
 import { fetchCoverUrl } from "./lib/bookApi";
+import { allLibraryCoverEntries } from "./lib/libraryCovers";
 import {
   loadRegistry,
   loadSaved,
@@ -84,6 +85,7 @@ export default function App() {
   const weightsRef = useRef<TasteWeight[]>([]);
   const excludeRef = useRef<Set<string>>(new Set());
   const coversRef = useRef<Set<string>>(new Set());
+  const coversInFlight = useRef<Set<string>>(new Set());
   const categoriesRef = useRef<Map<string, string[]>>(new Map());
   const undoTimer = useRef<number | null>(null);
   const fetchingMore = useRef(false);
@@ -95,13 +97,16 @@ export default function App() {
   // card so nothing pops in, and register each book for the shelves.
   // -------------------------------------------------------------------------
   const ensureCovers = useCallback(async (books: Book[], priorityKey?: string) => {
-    const pending = books.filter((b) => !coversRef.current.has(b.key));
+    const pending = books.filter(
+      (b) => !coversRef.current.has(b.key) && !coversInFlight.current.has(b.key)
+    );
     if (!pending.length) return;
 
-    // Instant preview from search seeds while full lookup runs.
+    // Instant preview from baked library / search seeds while full lookup runs.
     for (const book of pending) {
-      if (book.seedCoverUrl) {
-        setCovers((prev) => new Map(prev).set(book.key, book.seedCoverUrl!));
+      const preview = book.seedCoverUrl ?? allLibraryCoverEntries()[book.key] ?? null;
+      if (preview) {
+        setCovers((prev) => new Map(prev).set(book.key, preview));
       }
     }
 
@@ -113,15 +118,19 @@ export default function App() {
       ];
     }
 
-    const concurrency = 8;
+    const concurrency = 10;
     const load = async (book: Book) => {
-      coversRef.current.add(book.key);
+      coversInFlight.current.add(book.key);
       try {
         const url = await fetchCoverUrl(book);
         registerBook(book, url, book.categories);
         setCovers((prev) => new Map(prev).set(book.key, url));
+        if (url) coversRef.current.add(book.key);
       } catch {
-        setCovers((prev) => new Map(prev).set(book.key, book.seedCoverUrl ?? null));
+        const fallback = book.seedCoverUrl ?? allLibraryCoverEntries()[book.key] ?? null;
+        setCovers((prev) => new Map(prev).set(book.key, fallback));
+      } finally {
+        coversInFlight.current.delete(book.key);
       }
     };
 
@@ -153,10 +162,7 @@ export default function App() {
       const profile = resolveTasteProfile(learned);
       profileRef.current = profile;
 
-      const exclude = new Set<string>();
-      // Never recommend read / currently-reading / DNF, or anything swiped.
-      // (Want-to-read is deliberately not excluded — it seeds the candidates.)
-      for (const key of nonCandidateLibraryKeys()) exclude.add(key);
+      const exclude = new Set<string>(buildLibraryExclusionSet());
       for (const s of swipes) exclude.add(s.book_key);
       excludeRef.current = exclude;
 
@@ -165,7 +171,30 @@ export default function App() {
 
       setQueue(first);
       setLoading(false);
+
+      // Hydrate baked + cached shelf covers immediately.
+      const baked = allLibraryCoverEntries();
+      const registry = loadRegistry();
+      const hydrated = new Map<string, string | null>();
+      for (const [key, url] of Object.entries(baked)) hydrated.set(key, url);
+      for (const [key, row] of Object.entries(registry)) {
+        if (row.coverUrl) hydrated.set(key, row.coverUrl);
+      }
+      if (hydrated.size) {
+        setCovers((prev) => {
+          const next = new Map(prev);
+          for (const [key, url] of hydrated) {
+            if (!next.has(key)) next.set(key, url);
+          }
+          return next;
+        });
+        for (const key of hydrated.keys()) {
+          if (hydrated.get(key)) coversRef.current.add(key);
+        }
+      }
+
       void ensureCovers(first.slice(0, 10), first[0]?.key);
+      void ensureCovers(wantToReadBooks());
     })();
     return () => {
       cancelled = true;
