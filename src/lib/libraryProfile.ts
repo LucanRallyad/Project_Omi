@@ -4,7 +4,6 @@
  */
 import type { Book, LibraryBook, TasteWeight } from "../types";
 import libraryData from "../data/library.json";
-import { getLibraryCoverUrl } from "./libraryCovers";
 
 const library = libraryData as unknown as LibraryBook[];
 
@@ -215,7 +214,6 @@ export function libraryBooks(): LibraryBook[] {
 
 /** Map a want-to-read library row to a discover-queue Book. */
 export function wantToReadBookFromLibrary(b: LibraryBook): Book {
-  const bakedCover = b.coverUrl ?? getLibraryCoverUrl(b.key);
   return {
     key: b.key,
     title: b.cleanTitle,
@@ -227,6 +225,5 @@ export function wantToReadBookFromLibrary(b: LibraryBook): Book {
     averageRating: b.averageRating,
     reason: "On your Want to Read shelf",
     fromWantToRead: true,
-    seedCoverUrl: bakedCover,
   };
 }
