@@ -11,3 +11,4 @@ dist-ssr
 
 # Large media / source assets (kept out of the repo)
 *.mov
+.vercel

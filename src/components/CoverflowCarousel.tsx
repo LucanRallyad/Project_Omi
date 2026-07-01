@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Check, X, ChevronDown, BookOpen } from "lucide-react";
+import { Check, X, ChevronUp, BookOpen } from "lucide-react";
 import type { Book } from "../types";
 import { BookCard } from "./BookCard";
-import { SwipeCard, type SwipeAction } from "./SwipeCard";
+import { SwipeCard, type SwipeAction, type SwipeCardHandle } from "./SwipeCard";
 import { useViewport } from "../hooks/useViewport";
 import {
   cardDimensions,
@@ -38,6 +38,7 @@ export function CoverflowCarousel({
   const reduced = useReducedMotion() ?? false;
   const { width, height, isMobile } = useViewport();
   const wheelLock = useRef(false);
+  const swipeRef = useRef<SwipeCardHandle>(null);
 
   const { cardW, cardH, spacing } = cardDimensions(width, height, isMobile);
   const spring = isMobile ? MOBILE_SPRING : DESKTOP_SPRING;
@@ -95,7 +96,6 @@ export function CoverflowCarousel({
             });
 
             const zIndex = 100 - Math.abs(d);
-            const layoutId = `cover-${book.key}`;
 
             return (
               <motion.div
@@ -121,15 +121,16 @@ export function CoverflowCarousel({
               >
                 {isCenter ? (
                   <SwipeCard
+                    ref={swipeRef}
                     book={book}
                     coverUrl={covers.get(book.key) ?? book.seedCoverUrl ?? null}
                     saved={savedKeys.has(book.key)}
                     onToggleSave={() => onToggleSave(book)}
                     onCommit={onAction}
                     onOpenDetail={() => onOpenDetail(book)}
-                    layoutId={layoutId}
                     reducedMotion={reduced}
                     isMobile={isMobile}
+                    cardHeight={cardH}
                   />
                 ) : (
                   <div
@@ -150,7 +151,6 @@ export function CoverflowCarousel({
                       coverUrl={covers.get(book.key) ?? book.seedCoverUrl ?? null}
                       saved={savedKeys.has(book.key)}
                       onToggleSave={() => onToggleSave(book)}
-                      layoutId={layoutId}
                       showMeta={false}
                       dark={isMobile}
                     />
@@ -168,17 +168,17 @@ export function CoverflowCarousel({
             isMobile ? "gap-4" : "gap-5 py-6"
           }`}
         >
-          <ActionButton label="Pass" onClick={() => onAction("pass")} tone="pass" dark={isMobile}>
+          <ActionButton label="Pass" onClick={() => swipeRef.current?.trigger("pass")} tone="pass" dark={isMobile}>
             <X size={isMobile ? 24 : 26} strokeWidth={2.6} />
           </ActionButton>
           <ActionButton
             label="Skip"
-            onClick={() => onAction("skip")}
+            onClick={() => swipeRef.current?.trigger("skip")}
             tone="skip"
             dark={isMobile}
             small
           >
-            <ChevronDown size={22} strokeWidth={2.6} />
+            <ChevronUp size={22} strokeWidth={2.6} />
           </ActionButton>
           <ActionButton
             label="Details"
@@ -189,7 +189,7 @@ export function CoverflowCarousel({
           >
             <BookOpen size={22} strokeWidth={2.4} />
           </ActionButton>
-          <ActionButton label="Love" onClick={() => onAction("like")} tone="like" dark={isMobile}>
+          <ActionButton label="Love" onClick={() => swipeRef.current?.trigger("like")} tone="like" dark={isMobile}>
             <Check size={isMobile ? 24 : 26} strokeWidth={2.6} />
           </ActionButton>
         </div>

@@ -4,7 +4,7 @@
  * - Search: /search.json (author, subject, title, ISBN)
  * - Editions: /api/books (jscmd=details)
  * - Works: /works/{id}.json (descriptions)
- * - Covers: covers.openlibrary.org
+ * - Covers: covers.openlibrary.org (CDN — often works when the API host does not)
  */
 import type { Book } from "../types";
 
@@ -14,6 +14,18 @@ const OL_BOOKS = `${OPEN_LIBRARY}/api/books`;
 
 const SEARCH_FIELDS =
   "key,title,author_name,isbn,first_publish_year,ratings_average,ratings_count,cover_i,subject";
+
+/** After a connection failure, skip API calls for this long (covers CDN still used). */
+const OL_DOWN_MS = 10 * 60 * 1000;
+let olDownUntil = 0;
+
+export function isOpenLibraryApiAvailable(): boolean {
+  return Date.now() >= olDownUntil;
+}
+
+function markOpenLibraryDown(): void {
+  olDownUntil = Date.now() + OL_DOWN_MS;
+}
 
 export interface OpenLibraryMeta {
   coverUrl: string | null;
@@ -88,11 +100,13 @@ function subjectsFromEdition(details: OlEditionDetails["details"]): string[] {
 }
 
 async function olFetch<T>(url: string): Promise<T | null> {
+  if (!isOpenLibraryApiAvailable()) return null;
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
+    markOpenLibraryDown();
     return null;
   }
 }
@@ -119,6 +133,7 @@ async function openLibrarySearch(
   params: Record<string, string>,
   limit = 20
 ): Promise<Book[]> {
+  if (!isOpenLibraryApiAvailable()) return [];
   const qs = new URLSearchParams({
     ...params,
     limit: String(limit),
@@ -147,6 +162,8 @@ async function fetchEditionByIsbn(isbn: string): Promise<OlEditionDetails | null
 }
 
 async function findSearchDoc(book: Book): Promise<OlSearchDoc | null> {
+  if (!isOpenLibraryApiAvailable()) return null;
+
   if (book.isbn13) {
     const data = await olFetch<{ docs?: OlSearchDoc[] }>(
       `${OL_SEARCH}?isbn=${encodeURIComponent(book.isbn13)}&limit=1&fields=${SEARCH_FIELDS}`
@@ -172,10 +189,11 @@ export function openLibraryIsbnCover(isbn13: string): string {
   return `https://covers.openlibrary.org/b/isbn/${isbn13}-L.jpg?default=false`;
 }
 
-/** Fast cover lookup — no existence probe, no works/edition metadata. */
+/** Fast cover lookup — ISBN CDN URL only; no search API unless needed. */
 export async function fetchOpenLibraryCoverUrl(book: Book): Promise<string | null> {
   if (book.seedCoverUrl) return book.seedCoverUrl;
   if (book.isbn13) return openLibraryIsbnCover(book.isbn13);
+  if (!isOpenLibraryApiAvailable()) return null;
 
   const doc = await findSearchDoc(book);
   if (doc?.cover_i) return coverUrlFromId(doc.cover_i);
@@ -195,6 +213,17 @@ async function resolveCoverUrl(
 
 /** Fetch rich metadata from Open Library (search, editions, works, covers). */
 export async function fetchOpenLibraryMeta(book: Book): Promise<OpenLibraryMeta> {
+  if (!isOpenLibraryApiAvailable()) {
+    return {
+      coverUrl: book.isbn13 ? openLibraryIsbnCover(book.isbn13) : null,
+      description: null,
+      categories: [],
+      pageCount: null,
+      publishedDate: null,
+      previewLink: null,
+    };
+  }
+
   const searchDoc = await findSearchDoc(book);
   const isbn13 = book.isbn13 ?? pickIsbn13(searchDoc?.isbn);
 

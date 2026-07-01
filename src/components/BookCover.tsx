@@ -40,7 +40,7 @@ export function BookCover({
           }`}
           decoding="async"
           loading={priority ? "eager" : "lazy"}
-          fetchPriority={priority ? "high" : "auto"}
+          {...(priority ? { fetchpriority: "high" as const } : {})}
           draggable={false}
           onLoad={() => setLoaded(true)}
           onError={() => setFailed(true)}

@@ -16,11 +16,21 @@ import {
 import {
   fetchOpenLibraryCoverUrl,
   fetchOpenLibraryMeta,
+  isOpenLibraryApiAvailable,
   searchByAuthor as olByAuthor,
   searchBySubject as olBySubject,
 } from "./openLibrary";
+import { dedupe, RateLimiter } from "./requestQueue";
 
 const GOOGLE_BOOKS = "https://www.googleapis.com/books/v1/volumes";
+
+/** Without an API key Google allows ~1k/day; space requests to avoid 429 bursts. */
+const googleLimiter = new RateLimiter(
+  import.meta.env.VITE_GOOGLE_BOOKS_API_KEY ? 180 : 450
+);
+
+const searchCache = new Map<string, { books: Book[]; fetchedAt: number }>();
+const SEARCH_TTL_MS = 30 * 60 * 1000;
 
 function googleBooksUrl(params: Record<string, string | number>): string {
   const url = new URL(GOOGLE_BOOKS);
@@ -104,15 +114,22 @@ function formatPrice(vol: GoogleVolume): string | null {
 }
 
 async function fetchGoogleVolume(book: Book): Promise<GoogleVolume | null> {
+  if (googleLimiter.isPaused()) return null;
   const query = book.isbn13
     ? `isbn:${book.isbn13}`
     : `intitle:${book.title} inauthor:${book.author}`;
   const url = googleBooksUrl({ q: query, maxResults: 1, country: "US" });
   try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return (data.items?.[0] as GoogleVolume) ?? null;
+    return await googleLimiter.run(async () => {
+      const res = await fetch(url);
+      if (res.status === 429) {
+        googleLimiter.pause();
+        return null;
+      }
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data.items?.[0] as GoogleVolume) ?? null;
+    });
   } catch {
     return null;
   }
@@ -123,13 +140,15 @@ async function fetchGoogleCoverUrl(book: Book): Promise<string | null> {
   return bestGoogleCover(vol?.volumeInfo?.imageLinks);
 }
 
-/** First source to return a URL wins — no pre-validation downloads. */
+/** First source to return a URL wins — skip OL network race when its API is down. */
 function raceCoverSources(book: Book): Promise<string | null> {
-  const sources = [
+  const sources: (() => Promise<string | null>)[] = [
     () => fetchHardcoverCoverUrl(book),
-    () => fetchOpenLibraryCoverUrl(book),
-    () => fetchGoogleCoverUrl(book),
   ];
+  if (isOpenLibraryApiAvailable() || book.isbn13) {
+    sources.push(() => fetchOpenLibraryCoverUrl(book));
+  }
+  sources.push(() => fetchGoogleCoverUrl(book));
 
   return new Promise((resolve) => {
     let remaining = sources.length;
@@ -275,50 +294,107 @@ function volumeToBook(vol: GoogleSearchVolume): Book | null {
 }
 
 async function googleSearch(query: string, maxResults = 20): Promise<Book[]> {
-  const url = googleBooksUrl({
-    q: query,
-    maxResults,
-    orderBy: "relevance",
-    printType: "books",
-    country: "US",
-  });
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const data = await res.json();
-    const items = (data.items ?? []) as GoogleSearchVolume[];
-    return items.map(volumeToBook).filter((b): b is Book => b !== null);
-  } catch {
-    return [];
+  if (googleLimiter.isPaused()) return [];
+
+  const cacheKey = `g:${query}:${maxResults}`;
+  const cached = searchCache.get(cacheKey);
+  if (cached && cached.books.length > 0 && Date.now() - cached.fetchedAt < SEARCH_TTL_MS) {
+    return cached.books;
   }
+
+  return dedupe(cacheKey, async () => {
+    const url = googleBooksUrl({
+      q: query,
+      maxResults,
+      orderBy: "relevance",
+      printType: "books",
+      country: "US",
+    });
+    try {
+      const books = await googleLimiter.run(async () => {
+        const res = await fetch(url);
+        if (res.status === 429) {
+          googleLimiter.pause();
+          return [] as Book[];
+        }
+        if (!res.ok) return [] as Book[];
+        const data = await res.json();
+        const items = (data.items ?? []) as GoogleSearchVolume[];
+        return items.map(volumeToBook).filter((b): b is Book => b !== null);
+      });
+      if (books.length > 0) {
+        searchCache.set(cacheKey, { books, fetchedAt: Date.now() });
+      }
+      return books;
+    } catch {
+      return [];
+    }
+  });
+}
+
+function cachedSearch(key: string, fn: () => Promise<Book[]>): Promise<Book[]> {
+  const hit = searchCache.get(key);
+  if (hit && hit.books.length > 0 && Date.now() - hit.fetchedAt < SEARCH_TTL_MS) {
+    return Promise.resolve(hit.books);
+  }
+  return dedupe(key, async () => {
+    const books = await fn();
+    if (books.length > 0) {
+      searchCache.set(key, { books, fetchedAt: Date.now() });
+    }
+    return books;
+  });
 }
 
 async function mergedSearch(fetchers: (() => Promise<Book[]>)[]): Promise<Book[]> {
-  const results = await Promise.all(fetchers.map((fn) => fn().catch(() => [] as Book[])));
-  return mergeBooks(...results);
+  const primary = await Promise.all(
+    fetchers.slice(0, -1).map((fn) => fn().catch(() => [] as Book[]))
+  );
+  let books = mergeBooks(...primary);
+
+  const googleFetcher = fetchers[fetchers.length - 1];
+  if (googleFetcher && books.length < 8 && !googleLimiter.isPaused()) {
+    const google = await googleFetcher().catch(() => [] as Book[]);
+    books = mergeBooks(books, google);
+  }
+  return books;
+}
+
+function olSearchAuthor(author: string): Promise<Book[]> {
+  return isOpenLibraryApiAvailable() ? olByAuthor(author) : Promise.resolve([]);
+}
+
+function olSearchSubject(subject: string): Promise<Book[]> {
+  return isOpenLibraryApiAvailable() ? olBySubject(subject) : Promise.resolve([]);
 }
 
 export function searchByAuthor(author: string): Promise<Book[]> {
-  return mergedSearch([
-    () => hcByAuthor(author),
-    () => olByAuthor(author),
-    () => googleSearch(`inauthor:"${author}"`, 20),
-  ]);
+  return cachedSearch(`author:${author}`, () =>
+    mergedSearch([
+      () => hcByAuthor(author),
+      () => olSearchAuthor(author),
+      () => googleSearch(`inauthor:"${author}"`, 20),
+    ])
+  );
 }
 
 export function searchBySubject(subject: string): Promise<Book[]> {
-  return mergedSearch([
-    () => hcBySubject(subject),
-    () => olBySubject(subject),
-    () => googleSearch(`subject:"${subject}"`, 20),
-  ]);
+  return cachedSearch(`subject:${subject}`, () =>
+    mergedSearch([
+      () => hcBySubject(subject),
+      () => olSearchSubject(subject),
+      () => googleSearch(`subject:"${subject}"`, 20),
+    ])
+  );
 }
 
 export function searchByAuthorAndSubject(author: string, subject: string): Promise<Book[]> {
-  return mergedSearch([
-    () => hcByAuthorSubject(author, subject),
-    () => googleSearch(`inauthor:"${author}" subject:"${subject}"`, 15),
-  ]);
+  return cachedSearch(`author-subject:${author}:${subject}`, () =>
+    mergedSearch([
+      () => hcByAuthorSubject(author, subject),
+      () => googleSearch(`inauthor:"${author}" subject:"${subject}"`, 15),
+    ])
+  );
 }
 
 /** Load covers for a batch; optionally upgrade with a higher-res race winner. */

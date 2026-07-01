@@ -1,8 +1,36 @@
-import { executeHardcoverGraphQL } from "../lib/hardcoverProxy";
+const HARDCOVER_GRAPHQL = "https://api.hardcover.app/v1/graphql";
+
+interface HardcoverGraphQLResult {
+  data?: unknown;
+  errors?: { message?: string }[];
+}
+
+async function executeHardcoverGraphQL(
+  query: string,
+  variables: Record<string, unknown> | undefined,
+  token: string
+): Promise<HardcoverGraphQLResult> {
+  const authorization = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  const res = await fetch(HARDCOVER_GRAPHQL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      authorization,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Hardcover HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  return (await res.json()) as HardcoverGraphQLResult;
+}
 
 interface VercelRequest {
   method?: string;
-  body?: { query?: string; variables?: Record<string, unknown> };
+  body?: string | { query?: string; variables?: Record<string, unknown> };
 }
 
 interface VercelResponse {
@@ -10,6 +38,20 @@ interface VercelResponse {
   json: (body: unknown) => void;
   setHeader: (name: string, value: string) => void;
   end: () => void;
+}
+
+function parseBody(
+  body: VercelRequest["body"]
+): { query?: string; variables?: Record<string, unknown> } {
+  if (!body) return {};
+  if (typeof body === "string") {
+    try {
+      return JSON.parse(body) as { query?: string; variables?: Record<string, unknown> };
+    } catch {
+      return {};
+    }
+  }
+  return body;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -32,7 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  const { query, variables } = req.body ?? {};
+  const { query, variables } = parseBody(req.body);
   if (!query) {
     res.status(400).json({ error: "Missing GraphQL query" });
     return;

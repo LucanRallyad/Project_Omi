@@ -34,6 +34,7 @@ import { EmptyState } from "./components/EmptyState";
 import { UndoToast } from "./components/UndoToast";
 import { PasscodeGate } from "./components/PasscodeGate";
 import type { SwipeAction } from "./components/SwipeCard";
+import { useViewport } from "./hooks/useViewport";
 
 interface UndoState {
   book: Book;
@@ -319,6 +320,8 @@ export default function App() {
 
   const activeBook = queue[activeIndex];
   const exhausted = !loading && (queue.length === 0 || activeIndex >= queue.length);
+  const { isMobile } = useViewport();
+  const hideNav = isMobile && !!detailBook;
 
   return (
     <PasscodeGate>
@@ -337,6 +340,7 @@ export default function App() {
               }}
               savedCount={saved.length}
               likedCount={likedKeys.length}
+              hidden={hideNav}
             />
 
             <main className="h-full min-h-0 w-full">

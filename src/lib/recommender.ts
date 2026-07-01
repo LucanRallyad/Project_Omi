@@ -11,6 +11,8 @@
 import type { Book, LibraryBook, SwipeDirection, TasteWeight } from "../types";
 import libraryData from "../data/library.json";
 import { searchByAuthor, searchByAuthorAndSubject, searchBySubject } from "./bookApi";
+import { dedupe, runPool, sleep } from "./requestQueue";
+import { openLibraryIsbnCover } from "./openLibrary";
 
 const library = libraryData as unknown as LibraryBook[];
 
@@ -53,6 +55,7 @@ export function wantToReadBooks(): Book[] {
       averageRating: b.averageRating,
       reason: "On your Want to Read shelf",
       fromWantToRead: true,
+      seedCoverUrl: b.isbn13 ? openLibraryIsbnCover(b.isbn13) : null,
     }));
 }
 
@@ -142,43 +145,62 @@ export async function generateCandidates(
   exclude: Set<string>,
   limit = 30
 ): Promise<Book[]> {
-  const pool = new Map<string, Book>();
+  const cacheKey = `candidates:${limit}:${exclude.size}:${profile.topAuthors.slice(0, 4).join("|")}`;
 
-  const add = (book: Book, reason: string) => {
-    if (exclude.has(book.key) || pool.has(book.key)) return;
-    if (!book.reason) book.reason = reason;
-    pool.set(book.key, book);
-  };
+  return dedupe(cacheKey, async () => {
+    const pool = new Map<string, Book>();
 
-  // 1. Want-to-read seeds first (highest intent).
-  for (const b of wantToReadBooks()) add(b, b.reason ?? "On your Want to Read shelf");
+    const add = (book: Book, reason: string) => {
+      if (exclude.has(book.key) || pool.has(book.key)) return;
+      if (!book.reason) book.reason = reason;
+      pool.set(book.key, book);
+    };
 
-  // 2. More from her favorite authors + strongest genres (fetched in parallel).
-  const authorQueries = profile.topAuthors.slice(0, 6).map(async (author) => {
-    const results = await searchByAuthor(author);
-    for (const b of results) add(b, `Because you love ${author}`);
+    for (const b of wantToReadBooks()) add(b, b.reason ?? "On your Want to Read shelf");
+
+    const rank = () =>
+      [...pool.values()]
+        .filter((b) => !seen.has(b.key))
+        .map((b) => ({ book: b, score: scoreBook(b, profile) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map(({ book }) => book);
+
+    // Goodreads Want-to-Read shelf is enough to fill the queue — return immediately.
+    if (pool.size >= limit) {
+      const ranked = rank();
+      ranked.forEach((b) => seen.add(b.key));
+      return ranked;
+    }
+
+    const authorTasks = profile.topAuthors.slice(0, 4).map(
+      (author) => async () => {
+        const results = await searchByAuthor(author);
+        for (const b of results) add(b, `Because you love ${author}`);
+      }
+    );
+    const genreTasks = profile.topGenres.slice(0, 2).map(
+      (genre) => async () => {
+        const results = await searchBySubject(genre);
+        for (const b of results) add(b, `More ${genre.toLowerCase()} to fall for`);
+      }
+    );
+    const crossTasks = profile.topAuthors.slice(0, 2).flatMap((author) =>
+      profile.topGenres.slice(0, 1).map(
+        (genre) => async () => {
+          const results = await searchByAuthorAndSubject(author, genre);
+          for (const b of results) add(b, `${author} × ${genre.toLowerCase()}`);
+        }
+      )
+    );
+
+    await Promise.race([runPool([...authorTasks, ...genreTasks, ...crossTasks], 2, 120), sleep(4000)]);
+
+    const ranked = rank();
+
+    ranked.forEach((b) => seen.add(b.key));
+    return ranked;
   });
-  const genreQueries = profile.topGenres.slice(0, 3).map(async (genre) => {
-    const results = await searchBySubject(genre);
-    for (const b of results) add(b, `More ${genre.toLowerCase()} to fall for`);
-  });
-  const crossQueries = profile.topAuthors.slice(0, 3).flatMap((author) =>
-    profile.topGenres.slice(0, 2).map(async (genre) => {
-      const results = await searchByAuthorAndSubject(author, genre);
-      for (const b of results) add(b, `${author} × ${genre.toLowerCase()}`);
-    })
-  );
-  await Promise.all([...authorQueries, ...genreQueries, ...crossQueries]);
-
-  const ranked = [...pool.values()]
-    .filter((b) => !seen.has(b.key))
-    .map((b) => ({ book: b, score: scoreBook(b, profile) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(({ book }) => book);
-
-  ranked.forEach((b) => seen.add(b.key));
-  return ranked;
 }
 
 /** Reset the per-session "already queued" memory (used when resetting passes). */

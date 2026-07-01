@@ -2,7 +2,7 @@
 
 A cozy, personalized book–recommendation web app — a gift. It shows a cinematic
 3D "coverflow" carousel of book suggestions, learns what Romi likes as she swipes
-(right to love, left to pass, down to skip), lets her save books for later, and
+(right to love, left to pass, up to skip), lets her save books for later, and
 links out to buy them. Her likes and saves sync to the cloud so nothing is lost.
 
 The recommendations are seeded from her real Goodreads library (296 books) and get
@@ -12,7 +12,7 @@ smarter every time she swipes.
 
 - **Cinematic coverflow** carousel with 3D tilt, spring physics, and swipe gestures.
 - **Tinder-style rating:** swipe right = love (trains the algorithm), left = pass
-  (hidden forever), down = neutral skip (no effect).
+  (hidden forever), up = neutral skip (no effect).
 - **Personalized recommender** built from her ratings, favorite authors, and genres.
 - **Save shelf, Loved shelf, and Want to Read shelf** (her 45 Goodreads want-to-reads).
 - **Beautiful pink-floral fallback covers** for books without artwork.
