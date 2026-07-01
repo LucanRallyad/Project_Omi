@@ -16,6 +16,7 @@ import {
   searchBySubject as hcBySubject,
   searchByTitle as hcByTitle,
 } from "./hardcover";
+import { getLibraryCoverUrl } from "./libraryCovers";
 import {
   fetchOpenLibraryCoverUrl,
   fetchOpenLibraryMeta,
@@ -148,13 +149,14 @@ async function fetchGoogleCoverUrl(book: Book): Promise<string | null> {
 
 /** First source to return a URL wins — skip OL network race when its API is down. */
 async function resolveBestCover(book: Book): Promise<string | null> {
+  const baked = getLibraryCoverUrl(book.key);
   const [hc, google, ol] = await Promise.all([
     fetchHardcoverCoverUrl(book).catch(() => null),
     fetchGoogleCoverUrl(book).catch(() => null),
     fetchOpenLibraryCoverUrl(book).catch(() => null),
   ]);
 
-  return firstValidCoverUrl([hc, google, ol, book.seedCoverUrl]);
+  return firstValidCoverUrl([baked, hc, google, ol, book.seedCoverUrl]);
 }
 
 /**

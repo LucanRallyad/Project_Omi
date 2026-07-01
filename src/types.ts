@@ -30,6 +30,8 @@ export interface LibraryBook {
   goodreadsUrl: string | null;
   tags: ShelfTag[];
   pages: number | null;
+  /** Baked cover URL from scripts/fetchLibraryCovers.ts (optional). */
+  coverUrl?: string | null;
 }
 
 /** A candidate book to recommend (may originate from the library or an API). */

@@ -1,3 +1,13 @@
+/** CDN hosts we trust without a load probe (probe often false-negatives on CORS-heavy CDNs). */
+export function isTrustedCoverUrl(url: string): boolean {
+  return (
+    url.includes("hardcover.app") ||
+    url.includes("googleusercontent.com") ||
+    url.includes("gr-assets.com") ||
+    url.includes("media-amazon.com")
+  );
+}
+
 /** Lightweight cover URL validation — OL ISBN CDN often 404s or returns a 1×1 placeholder. */
 
 const probeCache = new Map<string, boolean>();
@@ -32,6 +42,10 @@ export async function firstValidCoverUrl(
 ): Promise<string | null> {
   const unique = [...new Set(urls.filter((u): u is string => Boolean(u)))];
   if (!unique.length) return null;
+
+  for (const url of unique) {
+    if (isTrustedCoverUrl(url)) return url;
+  }
 
   for (let i = 0; i < unique.length; i += concurrency) {
     const batch = unique.slice(i, i + concurrency);
