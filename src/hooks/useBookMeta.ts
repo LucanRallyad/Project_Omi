@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Book, BookMeta } from "../types";
 import { fetchBookMeta, fetchBookMetaQuick } from "../lib/bookApi";
-import { getCachedMeta } from "../lib/cache";
+import { getCachedMeta, getCachedMetaSync, setCachedMeta } from "../lib/cache";
 import { getLibraryDescription } from "../lib/libraryDescriptions";
 
 const EMPTY: BookMeta = {
@@ -15,15 +15,18 @@ const EMPTY: BookMeta = {
   previewLink: null,
 };
 
-function initialMeta(book: Book | null): BookMeta {
+function resolveInstantMeta(book: Book | null): BookMeta {
   if (!book) return EMPTY;
-  const description = getLibraryDescription(book.key);
-  return description ? { ...EMPTY, description } : EMPTY;
+  const baked = getLibraryDescription(book.key);
+  const cached = getCachedMetaSync(book.key);
+  if (cached?.description) return cached;
+  if (baked) return { ...EMPTY, description: baked };
+  return EMPTY;
 }
 
 export function useBookMeta(book: Book | null) {
-  const [meta, setMeta] = useState<BookMeta>(() => initialMeta(book));
-  const [loading, setLoading] = useState(() => !initialMeta(book).description);
+  const [meta, setMeta] = useState<BookMeta>(() => resolveInstantMeta(book));
+  const [loading, setLoading] = useState(() => !resolveInstantMeta(book).description);
 
   useEffect(() => {
     if (!book) {
@@ -32,28 +35,32 @@ export function useBookMeta(book: Book | null) {
       return;
     }
 
-    const baked = getLibraryDescription(book.key);
-    const seed = baked ? { ...EMPTY, description: baked } : EMPTY;
-    setMeta(seed);
-    setLoading(!baked);
+    const instant = resolveInstantMeta(book);
+    setMeta(instant);
+    if (instant.description) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
 
     let cancelled = false;
 
     (async () => {
       const cached = await getCachedMeta(book.key);
       if (cancelled) return;
-
       if (cached?.description) {
         setMeta(cached);
         setLoading(false);
         return;
       }
 
+      const baked = getLibraryDescription(book.key);
       const quick = await fetchBookMetaQuick(book, baked, cached);
       if (cancelled) return;
 
       setMeta(quick);
       if (quick.description) {
+        void setCachedMeta(book.key, quick);
         setLoading(false);
         return;
       }

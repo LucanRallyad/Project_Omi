@@ -11,6 +11,7 @@ import {
   type TasteProfile,
 } from "./lib/recommender";
 import { fetchCoverUrl, prefetchDiscoverMeta, prefetchMeta } from "./lib/bookApi";
+import { warmMetaCache } from "./lib/cache";
 import { allLibraryCoverEntries } from "./lib/libraryCovers";
 import {
   loadRegistry,
@@ -154,7 +155,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      await initLibrary();
+      await Promise.all([initLibrary(), warmMetaCache()]);
 
       const [swipes, savedList, learned] = await Promise.all([
         loadSwipes(),
@@ -202,7 +203,7 @@ export default function App() {
       }
 
       void ensureCovers(first.slice(0, 8), first[0]?.key);
-      prefetchDiscoverMeta(first, 0, 6);
+      prefetchDiscoverMeta(first, 0, 10);
       if (typeof window.requestIdleCallback === "function") {
         window.requestIdleCallback(() => void prefetchMeta(wantToReadBooks(), 2));
       } else {
@@ -219,7 +220,7 @@ export default function App() {
     if (!queue.length) return;
     const window = queue.slice(Math.max(0, activeIndex - 1), activeIndex + 5);
     void ensureCovers(window, queue[activeIndex]?.key);
-    prefetchDiscoverMeta(queue, activeIndex, 5);
+    prefetchDiscoverMeta(queue, activeIndex, 8);
   }, [queue, activeIndex, ensureCovers]);
 
   // Fetch more candidates when running low.

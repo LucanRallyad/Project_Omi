@@ -5,6 +5,7 @@ import type { LibraryBook } from "../types";
 import librarySeed from "../data/library.json";
 import { isSupabaseConfigured, supabase, PROFILE_ID } from "./supabase";
 import { rowToBook, type LibraryBookRow } from "../../lib/supabaseLibrary";
+import { indexLibraryDescriptions } from "./libraryDescriptions";
 
 let library: LibraryBook[] = librarySeed as unknown as LibraryBook[];
 let initialized = false;
@@ -32,6 +33,7 @@ export async function initLibrary(): Promise<LibraryBook[]> {
       .then(({ data, error }) => {
         if (!error && data?.length) {
           library = (data as LibraryBookRow[]).map(rowToBook);
+          indexLibraryDescriptions(library);
         }
       });
   }

@@ -60,6 +60,37 @@ export async function getCachedMeta(key: string): Promise<BookMeta | null> {
   });
 }
 
+/** Synchronous read from the in-memory layer (populated after warmMetaCache or setCachedMeta). */
+export function getCachedMetaSync(key: string): BookMeta | null {
+  const mem = memoryCache.get(key);
+  if (mem && Date.now() - mem.fetchedAt < TTL_MS) return mem.meta;
+  return null;
+}
+
+/** Bulk-load IndexedDB entries into memory so detail views open instantly. */
+export async function warmMetaCache(): Promise<number> {
+  const db = await openDb();
+  if (!db) return 0;
+
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE, "readonly");
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = () => {
+      const entries = (req.result ?? []) as CachedEntry[];
+      let loaded = 0;
+      const now = Date.now();
+      for (const entry of entries) {
+        if (now - entry.fetchedAt < TTL_MS) {
+          memoryCache.set(entry.key, entry);
+          loaded++;
+        }
+      }
+      resolve(loaded);
+    };
+    req.onerror = () => resolve(0);
+  });
+}
+
 export async function setCachedMeta(key: string, meta: BookMeta): Promise<void> {
   const entry: CachedEntry = { key, meta, fetchedAt: Date.now() };
   memoryCache.set(key, entry);

@@ -7,9 +7,9 @@
 import type { Book, BookMeta } from "../types";
 import { firstValidCoverUrl } from "./coverUtils";
 import { fetchGoodreadsDescription } from "./goodreads";
-import { getCachedMeta, patchCachedCover, setCachedMeta } from "./cache";
+import { getCachedMeta, getCachedMetaSync, patchCachedCover, setCachedMeta } from "./cache";
 import { getLibraryDescription } from "./libraryDescriptions";
-import { pickBestDescription } from "./textUtils";
+import { cleanDescription, pickBestDescription } from "./textUtils";
 import {
   fetchHardcoverCoverUrl,
   fetchHardcoverMeta,
@@ -22,6 +22,7 @@ import {
 import { getLibraryCoverUrl } from "./libraryCovers";
 import {
   fetchOpenLibraryCoverUrl,
+  fetchOpenLibraryDescription,
   fetchOpenLibraryMeta,
   isOpenLibraryApiAvailable,
   searchByAuthor as olByAuthor,
@@ -152,6 +153,34 @@ async function fetchGoogleVolume(book: Book): Promise<GoogleVolume | null> {
 
 function googleDescriptions(volumes: GoogleVolume[]): string | null {
   return pickBestDescription(...volumes.map((v) => v.volumeInfo?.description));
+}
+
+/** Return the first usable description — don't wait for slower sources. */
+async function raceFirstDescription(
+  sources: (() => Promise<string | null | undefined>)[]
+): Promise<string | null> {
+  if (!sources.length) return null;
+
+  return new Promise((resolve) => {
+    let pending = sources.length;
+    let settled = false;
+
+    const finish = (raw: string | null | undefined) => {
+      if (settled) return;
+      const clean = cleanDescription(raw);
+      if (clean) {
+        settled = true;
+        resolve(clean);
+        return;
+      }
+      pending -= 1;
+      if (pending <= 0) resolve(null);
+    };
+
+    for (const source of sources) {
+      source().then(finish).catch(() => finish(null));
+    }
+  });
 }
 
 async function fetchGoogleCoverUrl(book: Book): Promise<string | null> {
@@ -311,7 +340,7 @@ export async function fetchBookMeta(book: Book): Promise<BookMeta> {
   return meta;
 }
 
-/** Fast path: baked copy, Open Library + one Google hit — skips Hardcover/Goodreads. */
+/** Fast path: baked copy + raced API descriptions, then one Google hit for price/pages. */
 export async function fetchBookMetaQuick(
   book: Book,
   bakedDescription?: string | null,
@@ -319,24 +348,44 @@ export async function fetchBookMetaQuick(
 ): Promise<BookMeta> {
   const baked = bakedDescription ?? getLibraryDescription(book.key);
   const base = cached ?? null;
+  if (baked) {
+    return {
+      coverUrl: base?.coverUrl ?? getLibraryCoverUrl(book.key) ?? book.seedCoverUrl ?? null,
+      description: baked,
+      categories: base?.categories ?? book.categories ?? [],
+      price: base?.price ?? null,
+      buyUrl: base?.buyUrl ?? bookshopSearch(book),
+      pageCount: base?.pageCount ?? null,
+      publishedDate: base?.publishedDate ?? null,
+      previewLink: base?.previewLink ?? null,
+    };
+  }
 
-  const [ol, volumes] = await Promise.all([
-    fetchOpenLibraryMeta(book),
-    fetchGoogleVolumes(book, 1),
+  const googlePromise = fetchGoogleVolumes(book, 1);
+  const sources: (() => Promise<string | null | undefined>)[] = [
+    async () => googleDescriptions(await googlePromise),
+    () => fetchOpenLibraryDescription(book),
+  ];
+  if (book.goodreadsUrl) {
+    sources.push(() => fetchGoodreadsDescription(book.goodreadsUrl!));
+  }
+
+  const [description, volumes] = await Promise.all([
+    raceFirstDescription(sources),
+    googlePromise,
   ]);
   const vol = volumes[0] ?? null;
   const info = vol?.volumeInfo;
-  const description = pickBestDescription(baked, base?.description ?? null, ol.description, info?.description);
 
   return {
     coverUrl: base?.coverUrl ?? getLibraryCoverUrl(book.key) ?? book.seedCoverUrl ?? null,
-    description,
-    categories: mergeCategories(base?.categories, ol.categories, info?.categories, book.categories),
+    description: pickBestDescription(description, googleDescriptions(volumes), info?.description),
+    categories: mergeCategories(base?.categories, info?.categories, book.categories),
     price: vol ? formatPrice(vol) : base?.price ?? null,
     buyUrl: vol?.saleInfo?.buyLink ?? base?.buyUrl ?? bookshopSearch(book),
-    pageCount: ol.pageCount ?? info?.pageCount ?? base?.pageCount ?? null,
-    publishedDate: ol.publishedDate ?? info?.publishedDate ?? base?.publishedDate ?? null,
-    previewLink: ol.previewLink ?? cleanGoogleThumb(info?.previewLink) ?? base?.previewLink ?? null,
+    pageCount: info?.pageCount ?? base?.pageCount ?? null,
+    publishedDate: info?.publishedDate ?? base?.publishedDate ?? null,
+    previewLink: cleanGoogleThumb(info?.previewLink) ?? base?.previewLink ?? null,
   };
 }
 
@@ -521,30 +570,42 @@ export async function prefetchCovers(books: Book[], concurrency = 8): Promise<vo
   await Promise.all(workers);
 }
 
-export async function prefetchMeta(books: Book[], concurrency = 3): Promise<void> {
+export async function prefetchMeta(books: Book[], concurrency = 4): Promise<void> {
   const queue = [...books];
   const workers = Array.from({ length: concurrency }, async () => {
     while (queue.length) {
       const book = queue.shift();
       if (!book) break;
-      const cached = await getCachedMeta(book.key);
-      if (cached?.description) continue;
+      if (getCachedMetaSync(book.key)?.description) continue;
       const baked = getLibraryDescription(book.key);
-      const quick = await fetchBookMetaQuick(book, baked, cached).catch(() => null);
+      if (baked) {
+        const existing = (await getCachedMeta(book.key)) ?? {
+          coverUrl: null,
+          description: null,
+          categories: [],
+          price: null,
+          buyUrl: "",
+          pageCount: null,
+          publishedDate: null,
+          previewLink: null,
+        };
+        await setCachedMeta(book.key, { ...existing, description: baked });
+        continue;
+      }
+      const quick = await fetchBookMetaQuick(book, baked, null).catch(() => null);
       if (quick?.description) {
         await setCachedMeta(book.key, quick);
         continue;
       }
       await fetchBookMeta(book).catch(() => undefined);
-      await new Promise((r) => setTimeout(r, 120));
     }
   });
   await Promise.all(workers);
 }
 
 /** Warm description cache for the next cards in the discover queue. */
-export function prefetchDiscoverMeta(books: Book[], startIndex: number, count = 5): void {
+export function prefetchDiscoverMeta(books: Book[], startIndex: number, count = 8): void {
   const slice = books.slice(startIndex, startIndex + count);
   if (!slice.length) return;
-  void prefetchMeta(slice, 2);
+  void prefetchMeta(slice, 4);
 }

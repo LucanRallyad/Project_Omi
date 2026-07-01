@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
 import type { LibraryBook } from "../types";
 import { buildReadingGraph } from "../lib/bookGraph";
 import { runForceLayout, type SimNode } from "../lib/forceLayout";
@@ -20,11 +19,19 @@ const MAX_SCALE = 4;
 const LABEL_FADE_START = 0.55;
 const LABEL_FADE_END = 1.35;
 
-const LINK_COLORS = {
-  series: "rgba(212, 132, 154, 0.55)",
-  author: "rgba(201, 169, 97, 0.35)",
-  tag: "rgba(183, 148, 244, 0.35)",
-} as const;
+function linkColors(dark: boolean) {
+  return dark
+    ? {
+        series: "rgba(212, 132, 154, 0.6)",
+        author: "rgba(201, 169, 97, 0.45)",
+        tag: "rgba(183, 148, 244, 0.45)",
+      }
+    : {
+        series: "rgba(212, 132, 154, 0.7)",
+        author: "rgba(201, 169, 97, 0.55)",
+        tag: "rgba(183, 148, 244, 0.5)",
+      };
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
@@ -41,12 +48,12 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     null
   );
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, scale: 1 });
-  const dragRef = useRef<{ active: boolean; lastX: number; lastY: number; moved: boolean }>({
-    active: false,
-    lastX: 0,
-    lastY: 0,
-    moved: false,
-  });
+  const panRef = useRef<{
+    active: boolean;
+    pointerId: number | null;
+    lastX: number;
+    lastY: number;
+  }>({ active: false, pointerId: null, lastX: 0, lastY: 0 });
   const pinchRef = useRef<{ active: boolean; dist: number; scale: number }>({
     active: false,
     dist: 0,
@@ -80,19 +87,12 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // Obsidian-style dark canvas (consistent in light/dark shell).
-    const bg = ctx.createRadialGradient(w * 0.5, h * 0.45, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.75);
-    bg.addColorStop(0, dark ? "#2a2220" : "#2e2824");
-    bg.addColorStop(1, dark ? "#141110" : "#1a1615");
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, w, h);
-
     const { x: vx, y: vy, scale } = viewportRef.current;
     const cx = w / 2 + vx;
     const cy = h / 2 + vy;
     const labels = labelOpacity(scale);
+    const links = linkColors(dark);
 
-    // Links
     const nodeById = new Map(layout.nodes.map((n) => [n.id, n]));
     for (const link of layout.links) {
       const a = nodeById.get(link.source);
@@ -101,28 +101,23 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
       ctx.beginPath();
       ctx.moveTo(cx + a.x * scale, cy + a.y * scale);
       ctx.lineTo(cx + b.x * scale, cy + b.y * scale);
-      ctx.strokeStyle = LINK_COLORS[link.kind];
-      ctx.lineWidth = link.kind === "series" ? 1.4 : 0.9;
+      ctx.strokeStyle = links[link.kind];
+      ctx.lineWidth = link.kind === "series" ? 1.5 : 1;
       ctx.stroke();
     }
 
-    // Nodes
     for (const node of layout.nodes) {
       const sx = cx + node.x * scale;
       const sy = cy + node.y * scale;
       const r = node.r * scale;
 
       ctx.beginPath();
-      ctx.arc(sx, sy, Math.max(r, 2), 0, Math.PI * 2);
+      ctx.arc(sx, sy, Math.max(r, 2.5), 0, Math.PI * 2);
       ctx.fillStyle = node.color;
       ctx.fill();
 
-      if (dark) {
-        ctx.strokeStyle = "rgba(255,255,255,0.12)";
-      } else {
-        ctx.strokeStyle = "rgba(61, 43, 31, 0.15)";
-      }
-      ctx.lineWidth = 0.75;
+      ctx.strokeStyle = dark ? "rgba(255,255,255,0.18)" : "rgba(61, 43, 31, 0.2)";
+      ctx.lineWidth = 0.85;
       ctx.stroke();
 
       if (labels > 0.02 && r >= 3) {
@@ -147,7 +142,6 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     });
   }, [draw]);
 
-  // Build layout once books are available.
   useEffect(() => {
     setReady(false);
     const id = requestAnimationFrame(() => {
@@ -160,7 +154,6 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     return () => cancelAnimationFrame(id);
   }, [books, scheduleDraw]);
 
-  // Fit graph to viewport on first layout.
   useEffect(() => {
     if (!ready || !layoutRef.current || !containerRef.current) return;
     const layout = layoutRef.current;
@@ -177,7 +170,7 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     const gw = maxX - minX || 1;
     const gh = maxY - minY || 1;
     const rect = containerRef.current.getBoundingClientRect();
-    const pad = 48;
+    const pad = 32;
     const scale = clamp(
       Math.min((rect.width - pad * 2) / gw, (rect.height - pad * 2) / gh),
       MIN_SCALE,
@@ -187,7 +180,6 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     scheduleDraw();
   }, [ready, scheduleDraw]);
 
-  // Resize observer
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -214,29 +206,8 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     [scheduleDraw]
   );
 
-  const onWheel = useCallback(
-    (e: React.WheelEvent) => {
-      e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-      zoomAt(e.clientX, e.clientY, factor);
-    },
-    [zoomAt]
-  );
-
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    dragRef.current = { active: true, lastX: e.clientX, lastY: e.clientY, moved: false };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-  }, []);
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      const drag = dragRef.current;
-      if (!drag.active) return;
-      const dx = e.clientX - drag.lastX;
-      const dy = e.clientY - drag.lastY;
-      if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
-      drag.lastX = e.clientX;
-      drag.lastY = e.clientY;
+  const panBy = useCallback(
+    (dx: number, dy: number) => {
       viewportRef.current.x += dx;
       viewportRef.current.y += dy;
       scheduleDraw();
@@ -244,17 +215,70 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
     [scheduleDraw]
   );
 
-  const onPointerUp = useCallback((e: React.PointerEvent) => {
-    dragRef.current.active = false;
-    try {
-      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {
-      /* ignore */
+  // Native wheel listener — React's onWheel can't always preventDefault (passive).
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      zoomAt(e.clientX, e.clientY, factor);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomAt]);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    panRef.current = {
+      active: true,
+      pointerId: e.pointerId,
+      lastX: e.clientX,
+      lastY: e.clientY,
+    };
+    containerRef.current?.setPointerCapture(e.pointerId);
+    if (containerRef.current) containerRef.current.style.cursor = "grabbing";
+  }, []);
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const pan = panRef.current;
+      if (!pan.active || pan.pointerId !== e.pointerId) return;
+      const dx = e.clientX - pan.lastX;
+      const dy = e.clientY - pan.lastY;
+      pan.lastX = e.clientX;
+      pan.lastY = e.clientY;
+      panBy(dx, dy);
+    },
+    [panBy]
+  );
+
+  const endPan = useCallback((e: React.PointerEvent) => {
+    const pan = panRef.current;
+    if (pan.pointerId !== e.pointerId) return;
+    pan.active = false;
+    pan.pointerId = null;
+    if (containerRef.current) {
+      containerRef.current.style.cursor = "grab";
+      try {
+        containerRef.current.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
     }
   }, []);
 
   const onTouchStart = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length === 2) {
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      panRef.current = {
+        active: true,
+        pointerId: null,
+        lastX: t.clientX,
+        lastY: t.clientY,
+      };
+    } else if (e.touches.length === 2) {
+      panRef.current.active = false;
       const [a, b] = [e.touches[0], e.touches[1]];
       const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
       pinchRef.current = { active: true, dist, scale: viewportRef.current.scale };
@@ -263,6 +287,16 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
 
   const onTouchMove = useCallback(
     (e: React.TouchEvent) => {
+      if (e.touches.length === 1 && panRef.current.active && !pinchRef.current.active) {
+        e.preventDefault();
+        const t = e.touches[0];
+        const dx = t.clientX - panRef.current.lastX;
+        const dy = t.clientY - panRef.current.lastY;
+        panRef.current.lastX = t.clientX;
+        panRef.current.lastY = t.clientY;
+        panBy(dx, dy);
+        return;
+      }
       if (e.touches.length !== 2 || !pinchRef.current.active) return;
       e.preventDefault();
       const [a, b] = [e.touches[0], e.touches[1]];
@@ -276,10 +310,11 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
         zoomAt(midX, midY, target / current);
       }
     },
-    [zoomAt]
+    [panBy, zoomAt]
   );
 
   const onTouchEnd = useCallback(() => {
+    panRef.current.active = false;
     pinchRef.current.active = false;
   }, []);
 
@@ -294,71 +329,53 @@ export function ReadingGraph({ books, dark = false }: ReadingGraphProps) {
   }
 
   return (
-    <div
-      className="relative h-full w-full overflow-hidden"
-      style={{ touchAction: "none" }}
-    >
-      <header
-        className={`pointer-events-none absolute inset-x-0 z-10 px-4 pt-[max(5.5rem,calc(env(safe-area-inset-top)+4rem))] sm:px-5`}
+    <div className="relative h-full w-full overflow-hidden">
+      {/* Legend — sits directly under the nav pill, pointer-events-none so pan works through it */}
+      <div
+        className="pointer-events-none fixed left-1/2 z-[55] -translate-x-1/2"
+        style={{ top: "calc(max(1rem, env(safe-area-inset-top)) + 3.25rem)" }}
       >
-        <div className="mx-auto max-w-5xl">
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-          >
-            <h2
-              className={`font-display text-4xl font-semibold ${dark ? "text-white" : "text-espresso"}`}
-            >
-              Reading Map
-            </h2>
-            <p className={`mt-1 text-sm ${dark ? "text-white/55" : "text-espresso/55"}`}>
-              {readCount} books · {stats.links} connections
-              <span className="mx-2 opacity-40">·</span>
-              scroll to zoom, drag to explore
-            </p>
-          </motion.div>
-
-          <div
-            className={`pointer-events-auto mt-4 flex flex-wrap gap-3 text-[11px] ${
-              dark ? "text-white/45" : "text-espresso/50"
-            }`}
-          >
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-0.5 w-4 rounded-full bg-rose/60" />
-              series
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-0.5 w-4 rounded-full bg-gold/50" />
-              author
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-0.5 w-4 rounded-full bg-[#B794F4]/50" />
-              tag
-            </span>
-          </div>
+        <div
+          className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-full px-3.5 py-1.5 text-[11px] shadow-soft ${
+            dark ? "glass-dark text-white/50" : "glass text-espresso/55"
+          }`}
+        >
+          <span className={dark ? "text-white/65" : "text-espresso/70"}>
+            {readCount} books · {stats.links} links
+          </span>
+          <span className={`hidden h-3 w-px sm:block ${dark ? "bg-white/15" : "bg-espresso/15"}`} />
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-3.5 rounded-full bg-rose/70" />
+            series
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-3.5 rounded-full bg-gold/60" />
+            author
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-3.5 rounded-full bg-[#B794F4]/60" />
+            tag
+          </span>
         </div>
-      </header>
+      </div>
 
       <div
         ref={containerRef}
-        className={`absolute inset-0 ${dark ? "bg-charcoal/40" : "bg-espresso/[0.03]"}`}
+        className="absolute inset-0 cursor-grab select-none"
+        style={{ touchAction: "none" }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endPan}
+        onPointerCancel={endPan}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchEnd}
       >
-        <canvas
-          ref={canvasRef}
-          className="h-full w-full cursor-grab active:cursor-grabbing"
-          onWheel={onWheel}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          onTouchStart={onTouchStart}
-          onTouchMove={onTouchMove}
-          onTouchEnd={onTouchEnd}
-        />
+        <canvas ref={canvasRef} className="pointer-events-none h-full w-full" />
 
         {!ready && (
-          <div className="absolute inset-0 flex items-center justify-center">
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <p className={`text-sm ${dark ? "text-white/50" : "text-espresso/50"}`}>
               Mapping your library…
             </p>

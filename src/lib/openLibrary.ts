@@ -228,6 +228,22 @@ async function resolveCoverUrl(
   return null;
 }
 
+/** Description only — skips cover resolution and extra edition lookups when possible. */
+export async function fetchOpenLibraryDescription(book: Book): Promise<string | null> {
+  if (!isOpenLibraryApiAvailable()) return null;
+
+  const searchDoc = await findSearchDoc(book);
+  const firstSentence = searchDoc?.first_sentence?.[0] ?? null;
+  const fromSentence = firstSentence ? parseDescription(firstSentence) : null;
+  if (fromSentence && fromSentence.length > 120) return fromSentence;
+
+  const workKey = searchDoc?.key ?? null;
+  if (!workKey) return fromSentence;
+
+  const work = await fetchWork(workKey);
+  return parseDescription(work?.description) ?? fromSentence;
+}
+
 /** Fetch rich metadata from Open Library (search, editions, works, covers). */
 export async function fetchOpenLibraryMeta(book: Book): Promise<OpenLibraryMeta> {
   if (!isOpenLibraryApiAvailable()) {
