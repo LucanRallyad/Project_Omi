@@ -76,7 +76,11 @@ export function CoverflowCarousel({
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col">
       <div
-        className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden"
+        className={`relative z-10 flex min-h-0 w-full flex-1 justify-center overflow-hidden px-4 ${
+          isMobile
+            ? "items-end pb-2 pt-[max(4.5rem,calc(env(safe-area-inset-top)+3.5rem))]"
+            : "items-center"
+        }`}
         style={{ perspective: isMobile ? undefined : 1400, perspectiveOrigin: "50% 45%" }}
         onWheel={handleWheel}
       >
@@ -153,7 +157,6 @@ export function CoverflowCarousel({
                       saved={savedKeys.has(book.key)}
                       onToggleSave={() => onToggleSave(book)}
                       showMeta={false}
-                      dark={isMobile}
                     />
                   </div>
                 )}
@@ -165,11 +168,11 @@ export function CoverflowCarousel({
 
       {activeBook && (
         <div
-          className={`relative z-30 flex shrink-0 items-center justify-center px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] ${
+          className={`relative z-40 flex shrink-0 items-center justify-center px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] ${
             isMobile ? "gap-4" : "gap-5 py-6"
           }`}
         >
-          <ActionButton label="Pass" onClick={() => swipeRef.current?.trigger("pass")} tone="pass" dark={isMobile}>
+          <ActionButton label="Pass" onClick={() => swipeRef.current?.trigger("pass")} tone="pass">
             <X size={isMobile ? 24 : 26} strokeWidth={2.6} />
           </ActionButton>
           {isMobile ? (
@@ -177,7 +180,6 @@ export function CoverflowCarousel({
               label="Skip"
               onClick={() => swipeRef.current?.trigger("skip")}
               tone="skip"
-              dark
               small
             >
               <ChevronUp size={22} strokeWidth={2.6} />
@@ -196,12 +198,11 @@ export function CoverflowCarousel({
             label="Details"
             onClick={() => onOpenDetail(activeBook)}
             tone="detail"
-            dark={isMobile}
             small
           >
             <BookOpen size={22} strokeWidth={2.4} />
           </ActionButton>
-          <ActionButton label="Love" onClick={() => swipeRef.current?.trigger("like")} tone="like" dark={isMobile}>
+          <ActionButton label="Love" onClick={() => swipeRef.current?.trigger("like")} tone="like">
             <Check size={isMobile ? 24 : 26} strokeWidth={2.6} />
           </ActionButton>
         </div>

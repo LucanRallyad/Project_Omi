@@ -83,18 +83,18 @@ function cleanGoogleThumb(url: string | undefined): string | null {
     .replace(/zoom=\d+/, "zoom=0");
 }
 
-function bookshopSearch(book: Book): string {
+function indigoSearch(book: Book): string {
   const q = encodeURIComponent(`${book.title} ${book.author}`);
-  return `https://bookshop.org/beta-search?keywords=${q}`;
+  return `https://www.chapters.indigo.ca/en-ca/home/search/?keywords=${q}`;
 }
 
 function amazonSearch(book: Book): string {
   const q = encodeURIComponent(`${book.title} ${book.author}`);
-  return `https://www.amazon.com/s?k=${q}&i=stripbooks`;
+  return `https://www.amazon.ca/s?k=${q}&i=stripbooks`;
 }
 
-export function buyLinks(book: Book): { bookshop: string; amazon: string } {
-  return { bookshop: bookshopSearch(book), amazon: amazonSearch(book) };
+export function buyLinks(book: Book): { indigo: string; amazon: string } {
+  return { indigo: indigoSearch(book), amazon: amazonSearch(book) };
 }
 
 interface GoogleVolume {
@@ -324,7 +324,7 @@ export async function fetchBookMeta(book: Book): Promise<BookMeta> {
       book.categories
     ),
     price: vol ? formatPrice(vol) : fast.price ?? cached?.price ?? null,
-    buyUrl: vol?.saleInfo?.buyLink ?? fast.buyUrl ?? cached?.buyUrl ?? bookshopSearch(book),
+    buyUrl: vol?.saleInfo?.buyLink ?? fast.buyUrl ?? cached?.buyUrl ?? indigoSearch(book),
     pageCount: hc?.pageCount ?? ol.pageCount ?? info?.pageCount ?? fast.pageCount ?? cached?.pageCount ?? null,
     publishedDate:
       hc?.publishedDate ??
@@ -355,7 +355,7 @@ export async function fetchBookMetaQuick(
       description: baked,
       categories: base?.categories ?? book.categories ?? [],
       price: base?.price ?? null,
-      buyUrl: base?.buyUrl ?? bookshopSearch(book),
+      buyUrl: base?.buyUrl ?? indigoSearch(book),
       pageCount: base?.pageCount ?? null,
       publishedDate: base?.publishedDate ?? null,
       previewLink: base?.previewLink ?? null,
@@ -383,7 +383,7 @@ export async function fetchBookMetaQuick(
     description: pickBestDescription(description, googleDescriptions(volumes), info?.description),
     categories: mergeCategories(base?.categories, info?.categories, book.categories),
     price: vol ? formatPrice(vol) : base?.price ?? null,
-    buyUrl: vol?.saleInfo?.buyLink ?? base?.buyUrl ?? bookshopSearch(book),
+    buyUrl: vol?.saleInfo?.buyLink ?? base?.buyUrl ?? indigoSearch(book),
     pageCount: info?.pageCount ?? base?.pageCount ?? null,
     publishedDate: info?.publishedDate ?? base?.publishedDate ?? null,
     previewLink: cleanGoogleThumb(info?.previewLink) ?? base?.previewLink ?? null,

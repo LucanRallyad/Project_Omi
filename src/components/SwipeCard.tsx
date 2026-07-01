@@ -150,7 +150,6 @@ export const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function Sw
         onToggleSave={onToggleSave}
         layoutId={layoutId}
         showMeta
-        dark={isMobile}
         priority
       />
 

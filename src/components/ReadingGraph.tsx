@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Maximize2, Minus, Plus } from "lucide-react";
+import { GitGraph, Maximize2, Minus, Plus } from "lucide-react";
 import type { LibraryBook } from "../types";
 import { buildReadingGraph } from "../lib/bookGraph";
 import { GraphSimulation, type SimNode } from "../lib/graphSimulation";
@@ -12,6 +12,7 @@ import {
   obsidianTextFadeForViewport,
 } from "../lib/obsidianGraphConfig";
 import { useViewport } from "../hooks/useViewport";
+import { EmptyState } from "./EmptyState";
 
 interface ReadingGraphProps {
   books: LibraryBook[];
@@ -33,8 +34,7 @@ function clamp(v: number, lo: number, hi: number): number {
 
 export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
   const { isMobile } = useViewport();
-  const isDark = isMobile;
-  const theme = getGraphTheme(isDark);
+  const theme = getGraphTheme(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const simRef = useRef<GraphSimulation | null>(null);
@@ -102,15 +102,16 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
-    const sim = simRef.current;
-    if (!canvas || !sim) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.round(rect.width);
+    const h = Math.round(rect.height);
+    if (w < 1 || h < 1) return;
     if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
       canvas.width = w * dpr;
       canvas.height = h * dpr;
@@ -118,9 +119,12 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Graph background.
+    // Graph background — always paint so the view isn't blank while sim initializes.
     ctx.fillStyle = theme.background;
     ctx.fillRect(0, 0, w, h);
+
+    const sim = simRef.current;
+    if (!sim) return;
 
     const { x: vx, y: vy, scale } = viewportRef.current;
     const cx = w / 2 + vx;
@@ -206,20 +210,23 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
   useEffect(() => {
     fittedRef.current = false;
     setReady(false);
-    const graph = buildReadingGraph(books, isDark);
+    const graph = buildReadingGraph(books, false);
     simRef.current = new GraphSimulation(graph.nodes, graph.links);
     setStats({ nodes: graph.nodes.length, links: graph.links.length });
     setReady(true);
-  }, [books, isDark]);
+  }, [books]);
 
   const fitToView = useCallback(() => {
     const sim = simRef.current;
     const container = containerRef.current;
-    if (!sim || !container) return;
+    if (!sim || !container || sim.nodes.length === 0) return;
+
+    const rect = container.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return;
+
     const { minX, maxX, minY, maxY } = sim.bounds();
     const gw = maxX - minX || 1;
     const gh = maxY - minY || 1;
-    const rect = container.getBoundingClientRect();
     const pad = isMobile ? 28 : 60;
     const scale = clamp(
       Math.min((rect.width - pad * 2) / gw, (rect.height - pad * 2) / gh),
@@ -232,19 +239,32 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
 
   useEffect(() => {
     if (!ready || fittedRef.current) return;
-    requestAnimationFrame(() => fitToView());
+    fitToView();
   }, [ready, fitToView]);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const ro = new ResizeObserver(() => {
-      if (!fittedRef.current) fitToView();
+    if (!ready) return;
+    const id = requestAnimationFrame(() => {
+      fitToView();
       draw();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [ready, fitToView, draw]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !ready) return;
+
+    const ro = new ResizeObserver(() => {
+      const { width, height } = container.getBoundingClientRect();
+      if (width >= 2 && height >= 2) {
+        if (!fittedRef.current) fitToView();
+        draw();
+      }
     });
     ro.observe(container);
     return () => ro.disconnect();
-  }, [draw, fitToView]);
+  }, [ready, draw, fitToView]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, factor: number) => {
     const canvas = canvasRef.current;
@@ -436,22 +456,16 @@ export function ReadingGraph({ books, syncedAt }: ReadingGraphProps) {
 
   if (readCount === 0) {
     return (
-      <div
-        className="flex h-full items-center justify-center px-6 pt-24 pb-8"
-        style={{ background: theme.background, color: theme.controlsText }}
-      >
-        <p className="max-w-xs text-center text-sm opacity-60">
-          No finished reads yet — books marked as read on Goodreads will appear here.
-        </p>
-      </div>
+      <EmptyState
+        icon={<GitGraph size={30} />}
+        title="No finished reads yet"
+        message="Books marked as read on Goodreads will appear here as connected notes in your reading map."
+      />
     );
   }
 
   return (
-    <div
-      className="relative h-full w-full overflow-hidden"
-      style={{ background: theme.background }}
-    >
+    <div className="relative h-full min-h-0 w-full overflow-hidden" style={{ background: theme.background }}>
       <div
         className="pointer-events-none fixed left-1/2 z-[55] max-w-[calc(100vw-1.5rem)] -translate-x-1/2 rounded-md border px-3 py-1.5 text-center text-[11px] sm:text-left"
         style={{

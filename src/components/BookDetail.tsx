@@ -242,12 +242,12 @@ function BuyLinks({
     <div className={className}>
       <div className="grid grid-cols-2 gap-3">
         <a
-          href={links.bookshop}
+          href={links.indigo}
           target="_blank"
           rel="noreferrer"
           className="flex items-center justify-center gap-2 rounded-2xl bg-rose px-4 py-3 font-semibold text-white shadow-soft transition-transform active:scale-95"
         >
-          <ShoppingBag size={18} /> Bookshop
+          <ShoppingBag size={18} /> Indigo
         </a>
         <a
           href={links.amazon}

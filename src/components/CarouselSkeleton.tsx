@@ -9,10 +9,14 @@ export function CarouselSkeleton() {
 
   return (
     <div
-      className="flex h-full min-h-0 w-full items-center justify-center px-4 pt-[max(4.5rem,calc(env(safe-area-inset-top)+3.5rem))]"
-      style={{ perspective: isMobile ? 900 : 1400, perspectiveOrigin: "50% 45%" }}
+      className={`flex h-full min-h-0 w-full px-4 ${
+        isMobile
+          ? "items-end pb-2 pt-[max(4.5rem,calc(env(safe-area-inset-top)+3.5rem))]"
+          : "items-center justify-center"
+      }`}
+      style={{ perspective: isMobile ? undefined : 1400, perspectiveOrigin: "50% 45%" }}
     >
-      <div className="relative" style={{ width: cardW, height: cardH, transformStyle: "preserve-3d" }}>
+      <div className="relative" style={{ width: cardW, height: cardH, transformStyle: isMobile ? undefined : "preserve-3d" }}>
         {offsets.map((d) => {
           const t = computeCardTransform(d, {
             isMobile,
@@ -23,9 +27,7 @@ export function CarouselSkeleton() {
           return (
             <div
               key={d}
-              className={`absolute inset-0 rounded-[1.4rem] shimmer-bg animate-shimmer ${
-                isMobile ? "shadow-[0_24px_60px_-16px_rgba(0,0,0,0.5)]" : "shadow-card"
-              }`}
+              className="absolute inset-0 rounded-[1.4rem] shimmer-bg animate-shimmer shadow-card"
               style={{
                 transform: `translateX(${t.x}px) translateY(${t.y}px) translateZ(${t.z}px) rotateY(${t.rotateY}deg) rotateZ(${t.rotateZ}deg) scale(${t.scale})`,
                 opacity: t.opacity,

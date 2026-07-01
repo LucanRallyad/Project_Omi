@@ -5,18 +5,17 @@ const THEME = {
   dark: "#1A1615",
 } as const;
 
-/** Sync html background + browser chrome color with the active shell (mobile = dark immersive). */
-export function useShellTheme(isMobile: boolean): void {
+/** Sync html background + browser chrome color with the active shell. */
+export function useShellTheme(): void {
   useEffect(() => {
-    const mode = isMobile ? "dark" : "light";
-    document.documentElement.dataset.shell = mode;
+    document.documentElement.dataset.shell = "light";
 
     const meta = document.querySelector('meta[name="theme-color"]');
-    meta?.setAttribute("content", THEME[mode]);
+    meta?.setAttribute("content", THEME.light);
 
     return () => {
       delete document.documentElement.dataset.shell;
       meta?.setAttribute("content", THEME.light);
     };
-  }, [isMobile]);
+  }, []);
 }

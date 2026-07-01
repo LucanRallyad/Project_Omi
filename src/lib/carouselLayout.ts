@@ -31,19 +31,19 @@ export interface CardTransform {
   z: number;
 }
 
-/** Reserve space for the floating nav + action bar on mobile discover. */
+/** Reserve space for the floating nav + action bar on mobile discover (incl. safe areas). */
 export const MOBILE_CHROME = {
-  top: 48,
-  bottom: 88,
+  top: 96,
+  bottom: 120,
 };
 
 export function cardDimensions(width: number, height: number, isMobile: boolean) {
   if (isMobile) {
-    const availH = Math.max(280, height - MOBILE_CHROME.top - MOBILE_CHROME.bottom);
-    const fromWidth = Math.min(width * 0.86, 320);
-    const fromHeight = availH / 1.48;
-    const cardW = Math.max(220, Math.min(fromWidth, fromHeight));
-    const cardH = cardW * 1.48;
+    const availH = Math.max(240, height - MOBILE_CHROME.top - MOBILE_CHROME.bottom);
+    const fromWidth = Math.min(width * 0.78, 280);
+    const fromHeight = (availH * 0.85) / 1.48;
+    const cardW = Math.max(200, Math.min(fromWidth, fromHeight));
+    const cardH = Math.min(cardW * 1.48, availH * 0.85);
     return { cardW, cardH, spacing: 0 };
   }
 
@@ -76,12 +76,12 @@ export function computeCardTransform(
 
     const sign = d % 2 === 1 ? 1 : -1;
     return {
-      x: sign * (12 + d * 10),
-      y: -d * 34,
+      x: sign * (8 + d * 6),
+      y: -d * 22,
       rotateY: 0,
-      rotateZ: sign * (5 + d * 4),
-      scale: 1 - d * 0.085,
-      opacity: isCenter ? 1 : Math.max(0.55, 1 - d * 0.18),
+      rotateZ: sign * (4 + d * 3),
+      scale: 1 - d * 0.12,
+      opacity: isCenter ? 1 : Math.max(0.55, 1 - d * 0.2),
       z: -d * 55,
     };
   }

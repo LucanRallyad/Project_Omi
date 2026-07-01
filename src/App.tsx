@@ -39,15 +39,11 @@ import { UndoToast } from "./components/UndoToast";
 import { PasscodeGate } from "./components/PasscodeGate";
 import type { SwipeAction } from "./components/SwipeCard";
 import { initLibrary, getLibrary, refreshLibrary, librarySyncedAt } from "./lib/libraryStore";
-import { useViewport } from "./hooks/useViewport";
+import { useShellTheme } from "./hooks/useShellTheme";
+import { ReadingGraph } from "./components/ReadingGraph";
 
 const BookDetail = lazy(() =>
   import("./components/BookDetail").then((m) => ({ default: m.BookDetail }))
-);
-import { useShellTheme } from "./hooks/useShellTheme";
-
-const ReadingGraph = lazy(() =>
-  import("./components/ReadingGraph").then((m) => ({ default: m.ReadingGraph }))
 );
 
 interface UndoState {
@@ -163,8 +159,8 @@ export default function App() {
   useEffect(() => {
     if (view !== "reading-map") return;
     let cancelled = false;
-    void refreshLibrary().then((books) => {
-      if (!cancelled) setLibraryBooks(books);
+    void refreshLibrary().then(() => {
+      if (!cancelled) setLibraryBooks(getLibrary());
     });
     return () => {
       cancelled = true;
@@ -406,18 +402,13 @@ export default function App() {
 
   const activeBook = queue[activeIndex];
   const exhausted = !loading && (queue.length === 0 || activeIndex >= queue.length);
-  const { isMobile } = useViewport();
-  useShellTheme(isMobile);
+  useShellTheme();
   const hideNav = !!detailBook;
-  const shellDark = isMobile;
 
   return (
     <PasscodeGate>
       <div className="relative h-full w-full overflow-hidden">
-        <div
-          className={`shell-backdrop ${shellDark ? "bg-dusk" : "bg-warm"}`}
-          aria-hidden
-        />
+        <div className="shell-backdrop bg-warm" aria-hidden />
         <div className="relative z-10 h-full w-full">
         <AnimatePresence>
           {!entered && <WelcomeScreen key="welcome" onEnter={() => setEntered(true)} />}
@@ -431,7 +422,7 @@ export default function App() {
                 setDetailBook(null);
                 setView(next);
               }}
-              dark={shellDark}
+              dark={false}
               hidden={hideNav}
             />
 
@@ -442,7 +433,7 @@ export default function App() {
                     <CarouselSkeleton />
                   ) : exhausted ? (
                     <EmptyState
-                      dark={shellDark}
+                      dark={false}
                       icon={<Sparkles size={30} />}
                       title="You've seen them all"
                       message="You've been through every recommendation for now. Check your Want to Read shelf, or come back soon for fresh picks."
@@ -469,7 +460,7 @@ export default function App() {
               {view === "saved" &&
                 (savedItems.length ? (
                   <Shelf
-                    dark={shellDark}
+                    dark={false}
                     title="Saved"
                     subtitle={`${savedItems.length} book${savedItems.length === 1 ? "" : "s"} bookmarked for later`}
                     items={savedItems}
@@ -479,7 +470,7 @@ export default function App() {
                   />
                 ) : (
                   <EmptyState
-                    dark={shellDark}
+                    dark={false}
                     icon={<Bookmark size={30} />}
                     title="Nothing saved yet"
                     message="Tap the heart on any book to bookmark it here for later."
@@ -490,7 +481,7 @@ export default function App() {
               {view === "liked" &&
                 (likedItems.length ? (
                   <Shelf
-                    dark={shellDark}
+                    dark={false}
                     title="Loved"
                     subtitle={`${likedItems.length} book${likedItems.length === 1 ? "" : "s"} you swiped right on`}
                     items={likedItems}
@@ -498,7 +489,7 @@ export default function App() {
                   />
                 ) : (
                   <EmptyState
-                    dark={shellDark}
+                    dark={false}
                     icon={<Heart size={30} />}
                     title="No loves yet"
                     message="Swipe right on books you'd read. They'll gather here and teach the recommendations what you like."
@@ -509,7 +500,7 @@ export default function App() {
               {view === "want-to-read" &&
                 (wantItems.length ? (
                   <Shelf
-                    dark={shellDark}
+                    dark={false}
                     title="Want to Read"
                     subtitle={`${wantItems.length} books from your Goodreads shelf`}
                     items={wantItems}
@@ -517,7 +508,7 @@ export default function App() {
                   />
                 ) : (
                   <EmptyState
-                    dark={shellDark}
+                    dark={false}
                     icon={<BookMarked size={30} />}
                     title="Your Want to Read shelf is empty"
                     message="Books you marked 'Want to Read' on Goodreads will show up here."
@@ -525,9 +516,10 @@ export default function App() {
                 ))}
 
               {view === "reading-map" && (
-                <Suspense fallback={<CarouselSkeleton />}>
-                  <ReadingGraph books={libraryBooks} syncedAt={librarySyncedAt()} />
-                </Suspense>
+                <ReadingGraph
+                  books={libraryBooks.length > 0 ? libraryBooks : getLibrary()}
+                  syncedAt={librarySyncedAt()}
+                />
               )}
             </main>
           </>
