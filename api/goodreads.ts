@@ -1,4 +1,4 @@
-import { fetchGoodreadsDescription } from "../lib/goodreadsScrape";
+import { fetchGoodreadsDescription } from "../lib/goodreadsScrape.js";
 
 interface VercelRequest {
   method?: string;

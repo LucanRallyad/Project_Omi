@@ -1,8 +1,8 @@
-import type { VercelRequest, VercelResponse } from "../../lib/vercelTypes";
+import type { VercelRequest, VercelResponse } from "../../lib/vercelTypes.js";
 import { createClient } from "@supabase/supabase-js";
-import { syncGoodreadsLibrary } from "../../lib/goodreadsSync";
-import { persistLibrarySync } from "../../lib/persistLibrarySync";
-import { PROFILE_ID } from "../../lib/supabaseLibrary";
+import { syncGoodreadsLibrary } from "../../lib/goodreadsSync.js";
+import { persistLibrarySync } from "../../lib/persistLibrarySync.js";
+import { PROFILE_ID } from "../../lib/supabaseLibrary.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const secret = process.env.CRON_SECRET;

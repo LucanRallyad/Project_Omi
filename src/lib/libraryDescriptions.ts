@@ -2,7 +2,7 @@
  * Baked + synced book descriptions — loaded on demand to keep the main bundle small.
  */
 import type { LibraryBook } from "../types";
-import { getLibrary } from "./libraryStore";
+import { getLibrary } from "./libraryStore.js";
 
 const descriptionIndex = new Map<string, string>();
 let descriptionsReady: Promise<void> | null = null;

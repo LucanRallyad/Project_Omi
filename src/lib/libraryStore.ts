@@ -2,9 +2,9 @@
  * Runtime library — Supabase sync when available, static JSON as bootstrap fallback.
  */
 import type { LibraryBook } from "../types";
-import { indexLibraryDescriptions } from "./libraryDescriptions";
-import { isSupabaseConfigured, supabase, PROFILE_ID } from "./supabase";
-import { rowToBook, type LibraryBookRow } from "../../lib/supabaseLibrary";
+import { indexLibraryDescriptions } from "./libraryDescriptions.js";
+import { isSupabaseConfigured, supabase, PROFILE_ID } from "./supabase.js";
+import { rowToBook, type LibraryBookRow } from "../../lib/supabaseLibrary.js";
 
 let library: LibraryBook[] = [];
 let initialized = false;

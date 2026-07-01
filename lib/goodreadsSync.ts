@@ -8,7 +8,7 @@ import {
   type GoodreadsRssItem,
   type GoodreadsShelf,
   type GoodreadsTagShelf,
-} from "./goodreadsRss";
+} from "./goodreadsRss.js";
 
 const MAIN_SHELVES: GoodreadsShelf[] = [
   "read",

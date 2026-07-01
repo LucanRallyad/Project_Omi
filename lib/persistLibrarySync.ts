@@ -7,9 +7,9 @@ import {
   buildTasteProfile,
   nonCandidateLibraryKeys,
   tasteWeightsFromProfile,
-} from "../src/lib/libraryProfile";
-import { setLibrary } from "../src/lib/libraryStore";
-import { bookToRow, PROFILE_ID } from "./supabaseLibrary";
+} from "../src/lib/libraryProfile.js";
+import { setLibrary } from "../src/lib/libraryStore.js";
+import { bookToRow, PROFILE_ID } from "./supabaseLibrary.js";
 
 const BATCH = 100;
 

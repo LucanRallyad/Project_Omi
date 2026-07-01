@@ -3,7 +3,7 @@
  * Kept separate from API/search code so CLI seed scripts can import it in Node.
  */
 import type { Book, LibraryBook, TasteWeight } from "../types";
-import { getLibrary } from "./libraryStore";
+import { getLibrary } from "./libraryStore.js";
 
 /** Map shelf tags to broad genre/subject terms book APIs understand. */
 const TAG_TO_SUBJECT: Record<string, string> = {
